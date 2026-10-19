@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b1626">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="description" content="Pixel War: a territory-conquest strategy game. Expand, attack and be the last faction standing.">
+  <title>Pixel War</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-state="menu">
+  <canvas id="map" aria-label="Game map"></canvas>
+
+  <header id="hud-top" class="hud">
+    <div class="stat">
+      <span class="k">Troops</span>
+      <span class="v"><span id="troops">0</span><span id="troops-max" class="sub">/ 0</span></span>
+    </div>
+    <div class="stat">
+      <span class="k">Land</span>
+      <span id="land" class="v">0%</span>
+    </div>
+    <div class="stat">
+      <span class="k">Time</span>
+      <span id="clock" class="v">0:00</span>
+    </div>
+    <div class="hud-buttons">
+      <button id="btn-speed" class="icon-btn" aria-label="Game speed">1×</button>
+      <button id="btn-pause" class="icon-btn" aria-label="Pause">❚❚</button>
+    </div>
+  </header>
+
+  <ol id="board" class="hud" aria-label="Leaderboard"></ol>
+
+  <footer id="hud-bottom" class="hud">
+    <div class="send-row">
+      <label for="pct">Send</label>
+      <input id="pct" type="range" min="5" max="100" step="5" value="50">
+      <span id="pct-label">50%</span>
+    </div>
+    <div id="hint" class="hint">Tap or drag onto a neighbour to attack</div>
+  </footer>
+
+  <div id="banner" class="banner">
+    <p><strong>Tap the map</strong> to place your capital</p>
+    <button id="btn-random" class="secondary small">Random spot</button>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <section id="menu" class="overlay">
+    <div class="panel">
+      <h1 class="logo">PIXEL<span>WAR</span></h1>
+      <p class="tag">Conquer the map, one pixel at a time.</p>
+
+      <div class="field">
+        <span class="field-label">Opponents</span>
+        <div class="seg" id="seg-opp">
+          <button data-v="2">2</button>
+          <button data-v="3">3</button>
+          <button data-v="4">4</button>
+          <button data-v="5">5</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Difficulty</span>
+        <div class="seg" id="seg-diff">
+          <button data-v="easy">Easy</button>
+          <button data-v="normal">Normal</button>
+          <button data-v="hard">Hard</button>
+        </div>
+      </div>
+
+      <button id="btn-play" class="primary">Play</button>
+      <button id="btn-install" class="secondary hidden">Install app</button>
+
+      <details class="how">
+        <summary>How to play</summary>
+        <ul>
+          <li>Pick a spot for your capital. Rival factions start elsewhere on the map.</li>
+          <li>Your troops grow over time. More land means more troops and a higher cap.</li>
+          <li>Set how many troops to send with the <b>Send</b> slider, then <b>tap</b> (or drag your finger onto) any land that borders yours.</li>
+          <li>Grey land is unclaimed and cheap to take. Enemy land costs more the more troops they hold.</li>
+          <li>Troops on the march leave home weaker, so don't overreach.</li>
+          <li>Wipe out every rival to win. Lose all your land and it's over.</li>
+        </ul>
+      </details>
+      <p id="record" class="record"></p>
+    </div>
+  </section>
+
+  <section id="pause" class="overlay">
+    <div class="panel">
+      <h2>Paused</h2>
+      <button id="btn-resume" class="primary">Resume</button>
+      <button id="btn-restart" class="secondary">Restart</button>
+      <button id="btn-quit" class="secondary">Main menu</button>
+    </div>
+  </section>
+
+  <section id="over" class="overlay">
+    <div class="panel">
+      <h2 id="over-title">Victory</h2>
+      <p id="over-sub" class="tag"></p>
+      <dl id="over-stats" class="stats"></dl>
+      <button id="btn-again" class="primary">Play again</button>
+      <button id="btn-menu" class="secondary">Main menu</button>
+    </div>
+  </section>
+
+  <script src="game.js"></script>
+</body>
+</html>
