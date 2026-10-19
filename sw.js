@@ -1,12 +1,14 @@
 'use strict';
 
 // Bump the version whenever a cached file changes so phones pick it up.
-const CACHE = 'pixel-war-v2';
+const CACHE = 'pixel-war-v5';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './game.js',
+  './vendor/peerjs.min.js',
+  './localnet.js',
   './maps/world.js',
   './maps/europe.js',
   './manifest.webmanifest',

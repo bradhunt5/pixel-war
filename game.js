@@ -22,21 +22,30 @@
   const NEUTRAL_COST = 1.6;       // troops spent per unclaimed cell
   const NEUTRAL_RATE = 0.18;      // share of the frontier taken per tick
   const ENEMY_RATE = 0.1;
+  const ATTACK_FOCUS = 14;        // cells either side of the aim that advance
   const SLOT = 10;                // stride for the attacker/target lookup table
-  const FORT_RADIUS = 6;
-  const FORT_MULT = 3;
+  // Building stats by level (index 0 = level 1). Upgrades go up to level 3.
+  const MAX_LEVEL = 3;
+  const CITY_CAP = [1500, 3000, 5000];
+  const CITY_TROOPS = [2, 4, 7];
+  const CITY_GOLD = [1.5, 3, 5];
+  const MINE_GOLD = [4, 7, 11];
+  const FORT_RADIUS = [6, 8, 10];
+  const FORT_MULT = [3, 4, 5];
   const RAD_MULT = 4;             // irradiated land is this much harder to take
   const RAD_TIME = 45;
-  const ART_RANGE = 22;
-  const ART_RELOAD = 3.5;
+  const ART_RANGE = [22, 28, 34];
+  const ART_RELOAD = [3.5, 2.4, 1.5];
+  const ART_BLAST = [1, 1, 2];
   const SHELL_TIME = 1.2;
   const NUKE_COST = 900;
-  const NUKE_RADIUS = 7;
+  const NUKE_RADIUS = [7, 10, 13];
   const NUKE_TIME = 3;
-  const NUKE_COOLDOWN = 30;       // seconds between launches per faction
+  const NUKE_COOLDOWN = [30, 20, 12]; // seconds between launches per faction
   const BOAT_SPEED = 14;          // cells per second
   const MAX_BOATS = 3;
-  const DEPOSIT_EVERY = 300;      // land cells per gold deposit
+  const DEPOSIT_EVERY = 300;
+  const TINY_ISLAND = 5;          // islands smaller than this many cells are removed      // land cells per gold deposit
   const MIN_SPACING = 2;          // free cells required around a building
   const LAND_ROUTE_LIMIT = 6000;  // search budget when deciding land vs sea
 
@@ -72,13 +81,31 @@
     hard: { income: 1.2, aggr: 0.15, playerBias: 1.3, siloAggr: 0.4 },
   };
 
+  // stats(level) describes what a building does at a given level (1-3).
   const BUILDINGS = {
-    city: { label: 'City', icon: '🏙️', cost: 250, step: 1.3, hp: 3, desc: '+1,500 troop cap, faster troops, +gold' },
-    mine: { label: 'Gold mine', icon: '⛏️', cost: 120, step: 1.15, hp: 2, desc: 'Build on a gold deposit: +4 gold/s' },
-    fort: { label: 'Fort', icon: '🛡️', cost: 180, step: 1.3, hp: 4, desc: 'Nearby land is 3× harder to capture' },
-    artillery: { label: 'Artillery', icon: '🎯', cost: 350, step: 1.35, hp: 2, desc: `Shells enemies up to ${ART_RANGE} cells away` },
-    silo: { label: 'Nuclear silo', icon: '☢️', cost: 1200, step: 1.5, hp: 3, desc: `Unlocks nukes (${NUKE_COST} gold each)` },
+    city: {
+      label: 'City', icon: '🏙️', cost: 250, step: 1.3, hp: 3,
+      stats: (l) => `+${fmt(CITY_CAP[l - 1])} troop cap, +${CITY_TROOPS[l - 1]} troops/s, +${CITY_GOLD[l - 1]} gold/s`,
+    },
+    mine: {
+      label: 'Gold mine', icon: '⛏️', cost: 120, step: 1.15, hp: 2,
+      stats: (l) => `+${MINE_GOLD[l - 1]} gold/s (build on a gold deposit)`,
+    },
+    fort: {
+      label: 'Fort', icon: '🛡️', cost: 180, step: 1.3, hp: 4,
+      stats: (l) => `Land within ${FORT_RADIUS[l - 1]} cells is ${FORT_MULT[l - 1]}× harder to take`,
+    },
+    artillery: {
+      label: 'Artillery', icon: '🎯', cost: 350, step: 1.35, hp: 2,
+      stats: (l) => `Range ${ART_RANGE[l - 1]}, fires every ${ART_RELOAD[l - 1]}s${ART_BLAST[l - 1] > 1 ? ', bigger blast' : ''}`,
+    },
+    silo: {
+      label: 'Nuclear silo', icon: '☢️', cost: 1200, step: 1.5, hp: 3,
+      stats: (l) => `Nukes (${NUKE_COST}g): blast radius ${NUKE_RADIUS[l - 1]}, reload ${NUKE_COOLDOWN[l - 1]}s`,
+    },
   };
+  // Upgrading to level 2 costs 1.2× the base price, to level 3 2.4×.
+  const UPGRADE_MULT = [0, 1.2, 2.4];
   const BUILD_ORDER = ['city', 'mine', 'fort', 'artillery', 'silo'];
 
   const $ = (id) => document.getElementById(id);
@@ -117,6 +144,20 @@
   let last = performance.now();
   let hudTimer = 0;
   let pausedFrom = 'play';
+  let myId = 0;                   // which faction this device controls
+
+  // Multiplayer: the host simulates; clients send actions, receive snapshots.
+  const net = {
+    role: null,                   // null (single player), 'host' or 'client'
+    peer: null,
+    code: '',
+    conns: new Map(),             // host: peer id -> { conn, name, fid }
+    host: null,                   // client: connection to the host
+    seq: 0,
+    pending: new Map(),
+    lastSend: 0,
+    sentBver: -1,
+  };
   const view = { dpr: 1, mapX: 0, mapY: 0, cell: 1, minCell: 1, area: null, zoomRel: 1 };
   const off = document.createElement('canvas');
   const offCtx = off.getContext('2d');
@@ -145,7 +186,18 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const cx = (i) => i % G.gw;
   const cy = (i) => (i / G.gw) | 0;
-  const cellDist = (a, b) => Math.hypot(cx(a) - cx(b), cy(a) - cy(b));
+  // East-west offset from cell b to cell a; the World map wraps round.
+  function ddx(a, b) {
+    let d = cx(a) - cx(b);
+    if (G.wrap) {
+      if (d > G.gw / 2) d -= G.gw;
+      else if (d < -G.gw / 2) d += G.gw;
+    }
+    return d;
+  }
+  // Wrap an x coordinate on wrapping maps (others are bounds-checked later).
+  const wx = (x) => (G.wrap ? ((x % G.gw) + G.gw) % G.gw : x);
+  const cellDist = (a, b) => Math.hypot(ddx(a, b), cy(a) - cy(b));
 
   function fmt(n) {
     n = Math.max(0, n);
@@ -172,7 +224,9 @@
     const x = i % G.gw;
     const y = (i / G.gw) | 0;
     if (x > 0) fn(i - 1);
+    else if (G.wrap) fn(i + G.gw - 1);
     if (x < G.gw - 1) fn(i + 1);
+    else if (G.wrap) fn(i - G.gw + 1);
     if (y > 0) fn(i - G.gw);
     if (y < G.gh - 1) fn(i + G.gw);
   }
@@ -306,6 +360,32 @@
         G.countrySize[c]++;
       }
     }
+    removeTinyIslands();
+  }
+
+  // Islands of a few cells are hard to see or tap, so sink them.
+  function removeTinyIslands() {
+    const seen = new Uint8Array(G.n);
+    for (let s = 0; s < G.n; s++) {
+      if (G.owner[s] !== NEUTRAL || seen[s]) continue;
+      const island = [s];
+      seen[s] = 1;
+      for (let q = 0; q < island.length; q++) {
+        forNeighbours(island[q], (j) => {
+          if (G.owner[j] === NEUTRAL && !seen[j]) {
+            seen[j] = 1;
+            island.push(j);
+          }
+        });
+      }
+      if (island.length >= TINY_ISLAND) continue;
+      for (const i of island) {
+        G.countrySize[G.country[i]]--;
+        G.country[i] = -1;
+        G.owner[i] = WATER;
+        G.shade[i] = 0.93;
+      }
+    }
   }
 
   function placeDeposits() {
@@ -338,11 +418,95 @@
     document.body.dataset.state = s;
   }
 
-  function newGame(demo) {
+  // Terrain and deposits come only from (kind, seed, size), so a client can
+  // rebuild exactly the host's map.
+  function buildWorld(kind, seed, gw, gh, demo) {
+    const rec = kind !== 'random' && window.PIXEL_WAR_MAPS ? window.PIXEL_WAR_MAPS[kind] : null;
+    const rng = mulberry32(seed);
+    const n = gw * gh;
+    G = {
+      demo, gw, gh, rng, n, kind, seed,
+      diff: DIFFICULTY[settings.difficulty] || DIFFICULTY.normal,
+      real: !!rec,
+      wrap: kind === 'world' && !!rec,
+      cosX: Float64Array.from({ length: gw }, (_, x) => Math.cos(2 * Math.PI * x / gw)),
+      sinX: Float64Array.from({ length: gw }, (_, x) => Math.sin(2 * Math.PI * x / gw)),
+      state: demo ? 'menu' : 'spawn',
+      owner: new Int16Array(n),
+      shade: new Float32Array(n),
+      rad: new Float32Array(n),
+      radList: [],
+      bAt: new Int32Array(n).fill(-1),
+      buildings: new Map(),
+      nextBid: 1,
+      bver: 0,
+      country: null,
+      factions: [],
+      attacks: [],
+      boats: [],
+      shells: [],
+      missiles: [],
+      fx: [],
+      mode: null,
+      time: 0,
+      landCells: 0,
+      peakLand: 0,
+      minSpawnDist: 0,
+      winner: null,
+      dirty: true,
+      // Host-side change tracking for multiplayer snapshots.
+      track: false,
+      changed: [],
+      changedMark: new Uint8Array(n),
+      radEvents: [],
+      fxEvents: [],
+      events: [],
+    };
+    if (rec) realTerrain(decodeMap(rec), rec);
+    else generateTerrain();
+    for (let i = 0; i < n; i++) if (G.owner[i] === NEUTRAL) G.landCells++;
+    placeDeposits();
+    off.width = gw;
+    off.height = gh;
+    img = offCtx.createImageData(gw, gh);
+  }
+
+  function makeFaction(id, opts) {
+    const c = FACTIONS[id].color;
+    return Object.assign({
+      id,
+      isPlayer: false,
+      player: null,
+      name: FACTIONS[id].name,
+      color: c,
+      border: c.map((v) => v * 0.55),
+      css: `rgb(${c.join(',')})`,
+      persona: null,
+      aggr: 0.55,
+      income: 1,
+      alive: true,
+      troops: START_TROOPS,
+      gold: START_GOLD,
+      built: { city: 0, mine: 0, fort: 0, artillery: 0, silo: 0 },
+      cells: 0,
+      sx: 0,
+      sy: 0,
+      ca: 0,
+      sa: 0,
+      capital: -1,
+      kills: 0,
+      nextThink: 1 + Math.random() * 2,
+      nextNuke: 0,
+    }, opts);
+  }
+
+  // humans: names of the human players (single player: just 'You').
+  function newGame(demo, humans) {
     $('over').classList.remove('show');
     closeBuildSheet();
     acc = 0;
     setState(demo ? 'menu' : 'spawn');
+    humans = demo ? [] : humans || ['You'];
     const kind = demo ? 'random' : settings.map;
     const rec = kind !== 'random' && window.PIXEL_WAR_MAPS ? window.PIXEL_WAR_MAPS[kind] : null;
     let gw;
@@ -356,67 +520,26 @@
       gw = Math.max(40, Math.round(area.w / c));
       gh = Math.max(40, Math.round(area.h / c));
     }
-    const rng = mulberry32((Math.random() * 2 ** 32) >>> 0);
-    const diff = DIFFICULTY[settings.difficulty] || DIFFICULTY.normal;
-    const n = gw * gh;
+    buildWorld(kind, (Math.random() * 2 ** 32) >>> 0, gw, gh, demo);
+    const { rng, diff } = G;
+    G.mp = humans.length > 1;
+    G.track = !demo && net.role === 'host';
 
-    G = {
-      demo, gw, gh, rng, diff, n,
-      real: !!rec,
-      state: demo ? 'menu' : 'spawn',
-      owner: new Int16Array(n),
-      shade: new Float32Array(n),
-      rad: new Float32Array(n),
-      radList: [],
-      bAt: new Int32Array(n).fill(-1),
-      buildings: new Map(),
-      nextBid: 1,
-      country: null,
-      factions: [],
-      attacks: [],
-      boats: [],
-      shells: [],
-      missiles: [],
-      fx: [],
-      mode: null,
-      time: 0,
-      landCells: 0,
-      peakLand: 0,
-      killedByPlayer: 0,
-      minSpawnDist: 0,
-      dirty: true,
-    };
-    if (rec) realTerrain(decodeMap(rec), rec);
-    else generateTerrain();
-    for (let i = 0; i < n; i++) if (G.owner[i] === NEUTRAL) G.landCells++;
-    placeDeposits();
-
-    const count = demo ? FACTIONS.length : settings.opponents + 1;
+    const ais = demo ? FACTIONS.length : Math.min(settings.opponents, FACTIONS.length - humans.length);
+    const count = humans.length + ais;
     const personas = shuffle(CORE_PERSONAS.slice(), rng).concat(shuffle(EXTRA_PERSONAS.slice(), rng));
     for (let id = 0; id < count; id++) {
-      const isPlayer = !demo && id === 0;
-      const persona = personas[(id + (demo ? 0 : -1) + personas.length) % personas.length];
-      G.factions.push({
-        id,
-        isPlayer,
-        name: FACTIONS[id].name,
-        color: FACTIONS[id].color,
-        border: FACTIONS[id].color.map((v) => v * 0.55),
-        css: `rgb(${FACTIONS[id].color.join(',')})`,
-        persona: isPlayer ? null : persona.label,
-        aggr: isPlayer ? 0.55 : clamp(persona.aggr + diff.aggr, 0.05, 1),
-        income: isPlayer || demo ? 1 : diff.income,
-        alive: true,
-        troops: START_TROOPS,
-        gold: START_GOLD,
-        built: { city: 0, mine: 0, fort: 0, artillery: 0, silo: 0 },
-        cells: 0,
-        sx: 0,
-        sy: 0,
-        capital: -1,
-        nextThink: 1 + rng() * 2,
-        nextNuke: 0,
-      });
+      if (id < humans.length) {
+        G.factions.push(makeFaction(id, { isPlayer: true, player: humans[id], name: G.mp ? humans[id] : 'You' }));
+      } else {
+        const persona = personas[(id - humans.length) % personas.length];
+        G.factions.push(makeFaction(id, {
+          persona: persona.label,
+          aggr: clamp(persona.aggr + diff.aggr, 0.05, 1),
+          income: demo ? 1 : diff.income,
+          nextThink: 1 + rng() * 2,
+        }));
+      }
     }
 
     G.minSpawnDist = Math.max(gw, gh) * (G.real ? 0.12 : count > 4 ? 0.22 : 0.28);
@@ -428,9 +551,6 @@
       taken.push(i);
     }
 
-    off.width = gw;
-    off.height = gh;
-    img = offCtx.createImageData(gw, gh);
     view.zoomRel = 0;
     view.cell = 0;
     resize();
@@ -445,7 +565,7 @@
     let total = 0;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         total++;
         if (x >= 0 && y >= 0 && x < G.gw && y < G.gh && G.owner[y * G.gw + x] === NEUTRAL) land++;
@@ -490,7 +610,7 @@
     if (G.real) {
       // Take the chosen country (or the part of it nearest the capital).
       const c = G.country[i];
-      f.name = G.countryNames[c];
+      f.name = G.mp && f.player ? `${G.countryNames[c]} (${f.player})` : G.countryNames[c];
       const queue = [i];
       const seen = new Set(queue);
       for (let q = 0; q < queue.length && f.cells < COUNTRY_START_CELLS; q++) {
@@ -511,7 +631,7 @@
     for (let dy = -SPAWN_RADIUS; dy <= SPAWN_RADIUS; dy++) {
       for (let dx = -SPAWN_RADIUS; dx <= SPAWN_RADIUS; dx++) {
         if (dx * dx + dy * dy > SPAWN_RADIUS * SPAWN_RADIUS + 1) continue;
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const j = y * G.gw + x;
@@ -520,47 +640,25 @@
     }
   }
 
-  function chooseSpawn(i) {
-    if (!G || G.state !== 'spawn' || i < 0) return;
-    if (G.owner[i] === WATER) {
-      toast('Pick a spot on land');
-      return;
-    }
-    if (G.owner[i] !== NEUTRAL) {
-      toast(G.real ? `${G.factions[G.owner[i]].name} is already taken` : 'That land is taken');
-      return;
-    }
-    const taken = G.factions.filter((f) => !f.isPlayer).map((f) => f.capital);
-    const rival = G.real && G.factions.find((f) => !f.isPlayer && G.country[f.capital] === G.country[i]);
-    if (rival) {
-      toast(`${rival.name} is already led by a rival`);
-      return;
-    }
-    if (!distOk(i, taken, G.minSpawnDist * (G.real ? 0.25 : 0.55))) {
-      toast('Too close to a rival. Pick somewhere else');
-      return;
-    }
-    startWithCapital(i);
-  }
-
-  function startWithCapital(i) {
-    claimStart(G.factions[0], i);
-    setState('play');
-    centreOn(i);
+  // Called on this device once our capital exists: centre the view on it.
+  function afterSpawn(cell) {
+    if (G.spawnShown) return;
+    G.spawnShown = true;
+    centreOn(cell);
     try {
       history.pushState({ pixelwar: true }, '');
     } catch (e) {
       // History API unavailable: back button simply leaves the page.
     }
-    toast(G.real ? `You lead ${G.factions[0].name}. Expand, build, conquer!`
-      : 'Grab the grey land first, then strike!');
+    updateBanner();
   }
 
   // ---------- Ownership and buildings ----------
 
-  function setOwner(i, o) {
+  // Update ownership and the per-faction tallies (also used by clients).
+  function assignCell(i, o) {
     const prev = G.owner[i];
-    if (prev === o) return;
+    if (prev === o) return false;
     const x = i % G.gw;
     const y = (i / G.gw) | 0;
     if (prev >= 0) {
@@ -568,15 +666,28 @@
       f.cells--;
       f.sx -= x;
       f.sy -= y;
+      f.ca -= G.cosX[x];
+      f.sa -= G.sinX[x];
     }
     if (o >= 0) {
       const f = G.factions[o];
       f.cells++;
       f.sx += x;
       f.sy += y;
+      f.ca += G.cosX[x];
+      f.sa += G.sinX[x];
     }
     G.owner[i] = o;
     G.dirty = true;
+    if (G.track && !G.changedMark[i]) {
+      G.changedMark[i] = 1;
+      G.changed.push(i);
+    }
+    return true;
+  }
+
+  function setOwner(i, o) {
+    if (!assignCell(i, o)) return;
     const bid = G.bAt[i];
     if (bid >= 0) {
       const b = G.buildings.get(bid);
@@ -585,6 +696,7 @@
         G.factions[b.owner].built[b.type]--;
         G.factions[o].built[b.type]++;
         b.owner = o;
+        G.bver++;
       } else {
         destroyBuilding(b);
       }
@@ -605,7 +717,7 @@
     const y0 = cy(i);
     for (let dy = -MIN_SPACING; dy <= MIN_SPACING; dy++) {
       for (let dx = -MIN_SPACING; dx <= MIN_SPACING; dx++) {
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         if (G.bAt[y * G.gw + x] >= 0) return 'Too close to another building';
@@ -619,41 +731,83 @@
     if (f.gold < cost) return false;
     if (canPlace(f, type, i)) return false;
     f.gold -= cost;
-    const b = { id: G.nextBid++, type, cell: i, owner: f.id, hp: BUILDINGS[type].hp, reload: ART_RELOAD };
+    const b = { id: G.nextBid++, type, cell: i, owner: f.id, level: 1, hp: BUILDINGS[type].hp, reload: ART_RELOAD[0] };
     G.buildings.set(b.id, b);
     G.bAt[i] = b.id;
     f.built[type]++;
+    G.bver++;
     return true;
+  }
+
+  const upgradeCost = (b) => Math.round(BUILDINGS[b.type].cost * UPGRADE_MULT[b.level]);
+
+  function upgrade(f, b) {
+    if (b.owner !== f.id || b.level >= MAX_LEVEL) return false;
+    const cost = upgradeCost(b);
+    if (f.gold < cost) return false;
+    f.gold -= cost;
+    b.level++;
+    b.hp++;
+    G.bver++;
+    return true;
+  }
+
+  // Sum the economic bonuses of each faction's buildings (cheap: run per tick).
+  function tallyBonuses() {
+    for (const f of G.factions) {
+      f.capBonus = 0;
+      f.troopBonus = 0;
+      f.goldBonus = 0;
+      f.siloLevel = 0;
+    }
+    for (const b of G.buildings.values()) {
+      const f = G.factions[b.owner];
+      const l = b.level - 1;
+      if (b.type === 'city') {
+        f.capBonus += CITY_CAP[l];
+        f.troopBonus += CITY_TROOPS[l];
+        f.goldBonus += CITY_GOLD[l];
+      } else if (b.type === 'mine') {
+        f.goldBonus += MINE_GOLD[l];
+      } else if (b.type === 'silo') {
+        f.siloLevel = Math.max(f.siloLevel, b.level);
+      }
+    }
   }
 
   function destroyBuilding(b) {
     if (!G.buildings.has(b.id)) return;
     G.buildings.delete(b.id);
     G.bAt[b.cell] = -1;
+    G.bver++;
     G.factions[b.owner].built[b.type]--;
     addFx(b.cell, 2.5, '255,170,60', 600);
   }
 
-  function nearFort(i, fid) {
+  // Strongest fort multiplier covering cell i for faction fid (1 if none).
+  function fortMult(i, fid) {
+    let m = 1;
     for (const b of G.buildings.values()) {
-      if (b.type === 'fort' && b.owner === fid && cellDist(b.cell, i) <= FORT_RADIUS) return true;
+      if (b.type === 'fort' && b.owner === fid && cellDist(b.cell, i) <= FORT_RADIUS[b.level - 1]) {
+        m = Math.max(m, FORT_MULT[b.level - 1]);
+      }
     }
-    return false;
+    return m;
   }
 
   // ---------- Simulation ----------
 
-  const maxTroops = (f) => 100 + f.cells * 12 + f.built.city * 1500;
+  const maxTroops = (f) => 100 + f.cells * 12 + (f.capBonus || 0);
 
   function grow(f) {
-    f.gold += (1 + f.cells * 0.003 + f.built.mine * 4 + f.built.city * 1.5) * TICK * f.income;
+    f.gold += (1 + f.cells * 0.003 + f.goldBonus) * TICK * f.income;
     const max = maxTroops(f);
     if (f.troops > max) {
       f.troops -= (f.troops - max) * 0.02;
       return;
     }
     const interest = f.troops * 0.07 * (1 - f.troops / max);
-    const base = 0.5 + f.cells * 0.04 + f.built.city * 2;
+    const base = 0.5 + f.cells * 0.04 + f.troopBonus;
     f.troops = Math.min(max, f.troops + (base + interest) * TICK * f.income);
   }
 
@@ -691,17 +845,35 @@
       }
     }
     G.boats = G.boats.filter((b) => b.owner !== f.id);
-    if (G.demo || f.isPlayer) return;
-    if (by === 0) G.killedByPlayer++;
-    if (by === 0) toast(`You crushed ${f.name}!`);
-    else if (by > 0) toast(`${f.name} has fallen to ${G.factions[by].name}`);
-    else toast(`${f.name} has collapsed`);
+    if (by >= 0) G.factions[by].kills++;
+    announce({ k: 'elim', f: f.id, by });
+  }
+
+  // Game-wide news: shown here and, on a host, sent to every client.
+  function announce(ev) {
+    if (G.demo) return;
+    if (G.track) G.events.push(ev);
+    showEvent(ev);
+  }
+
+  function showEvent(ev) {
+    const name = (id) => G.factions[id].name;
+    if (ev.k === 'elim') {
+      if (ev.f === myId) return; // Our own defeat gets the results screen.
+      if (ev.by === myId) toast(`You crushed ${name(ev.f)}!`);
+      else if (ev.by >= 0) toast(`${name(ev.f)} has fallen to ${name(ev.by)}`);
+      else toast(`${name(ev.f)} has collapsed`);
+    } else if (ev.k === 'nuke') {
+      toast(ev.f === myId ? '☢ Nuke launched!' : `☢ ${name(ev.f)} has launched a nuke!`);
+    } else if (ev.k === 'msg') {
+      toast(ev.text);
+    }
   }
 
   function captureCost(i, def, density) {
     let c = def ? 1.5 + density * 1.15 : NEUTRAL_COST;
     if (G.rad[i] > 0) c *= RAD_MULT;
-    if (def && def.built.fort && nearFort(i, def.id)) c *= FORT_MULT;
+    if (def && def.built.fort) c *= fortMult(i, def.id);
     return c;
   }
 
@@ -723,7 +895,7 @@
   // One pass over the grid collects, for every active attack, the target
   // cells that touch the attacker's land.
   function collectFrontiers() {
-    const { gw, gh, owner, attacks } = G;
+    const { gw, gh, owner, attacks, wrap } = G;
     const index = new Int16Array(SLOT * SLOT).fill(-1);
     const fronts = attacks.map(() => []);
     if (!attacks.length) return fronts;
@@ -751,7 +923,9 @@
         if (o === WATER || !targeted[o + 1]) continue;
         s0 = s1 = s2 = -1;
         if (x > 0) consider(i, o, owner[i - 1]);
+        else if (wrap) consider(i, o, owner[i + gw - 1]);
         if (x < gw - 1) consider(i, o, owner[i + 1]);
+        else if (wrap) consider(i, o, owner[i - gw + 1]);
         if (y > 0) consider(i, o, owner[i - gw]);
         if (y < gh - 1) consider(i, o, owner[i + gw]);
       }
@@ -774,6 +948,15 @@
     }
   }
 
+  function aimDx(x, aimX) {
+    let d = x - aimX;
+    if (G.wrap) {
+      if (d > G.gw / 2) d -= G.gw;
+      else if (d < -G.gw / 2) d += G.gw;
+    }
+    return d;
+  }
+
   function advanceAttacks() {
     const { gw, rng } = G;
     const fronts = collectFrontiers();
@@ -788,10 +971,15 @@
       }
       const scored = front.map((i) => ({
         i,
-        d: Math.hypot(i % gw - a.aimX, ((i / gw) | 0) - a.aimY) + rng() * 6,
+        d: Math.hypot(aimDx(i % gw, a.aimX), ((i / gw) | 0) - a.aimY) + rng() * 6,
       }));
       scored.sort((p, q) => p.d - q.d);
-      const cap = Math.ceil(front.length * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE)) + 1;
+      // Only the stretch of border near the aim point advances, so a big
+      // nation pushes where you tapped rather than all along its frontier.
+      const reach = scored[0].d + ATTACK_FOCUS;
+      let width = 0;
+      while (width < scored.length && scored[width].d <= reach) width++;
+      const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE)) + 1;
       for (let j = 0; j < Math.min(cap, scored.length); j++) {
         const i = scored[j].i;
         if (G.owner[i] !== a.to) continue;
@@ -827,7 +1015,9 @@
       const x = i % gw;
       const y = (i / gw) | 0;
       if (x > 0) note(owner[i - 1], i - 1);
+      else if (G.wrap) note(owner[i + gw - 1], i + gw - 1);
       if (x < gw - 1) note(owner[i + 1], i + 1);
+      else if (G.wrap) note(owner[i - gw + 1], i - gw + 1);
       if (y > 0) note(owner[i - gw], i - gw);
       if (y < gh - 1) note(owner[i + gw], i + gw);
     }
@@ -949,7 +1139,7 @@
     for (const t of G.buildings.values()) {
       if (t.owner === b.owner) continue;
       const d = cellDist(t.cell, b.cell);
-      if (d <= ART_RANGE && d < bestD) {
+      if (d <= ART_RANGE[b.level - 1] && d < bestD) {
         bestD = d;
         best = t.cell;
       }
@@ -959,8 +1149,8 @@
     const y0 = cy(b.cell);
     for (let tries = 0; tries < 40; tries++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 3 + Math.random() * (ART_RANGE - 3);
-      const x = Math.round(x0 + Math.cos(ang) * r);
+      const r = 3 + Math.random() * (ART_RANGE[b.level - 1] - 3);
+      const x = wx(Math.round(x0 + Math.cos(ang) * r));
       const y = Math.round(y0 + Math.sin(ang) * r);
       if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
       const o = G.owner[y * G.gw + x];
@@ -979,8 +1169,8 @@
         b.reload = 1;
         continue;
       }
-      b.reload = ART_RELOAD;
-      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME });
+      b.reload = ART_RELOAD[b.level - 1];
+      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME, blast: ART_BLAST[b.level - 1] });
     }
   }
 
@@ -989,6 +1179,7 @@
     if (bid < 0) return false;
     const b = G.buildings.get(bid);
     b.hp--;
+    G.bver++;
     if (b.hp <= 0) {
       destroyBuilding(b);
       return false;
@@ -999,9 +1190,11 @@
   function shellImpact(s) {
     const x0 = cx(s.to);
     const y0 = cy(s.to);
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const x = x0 + dx;
+    const r = s.blast;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r + 1) continue;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const i = y * G.gw + x;
@@ -1014,7 +1207,7 @@
         setOwner(i, NEUTRAL);
       }
     }
-    addFx(s.to, 2, '255,200,90', 450);
+    addFx(s.to, 1 + r, '255,200,90', 450);
   }
 
   function launchNuke(f, target) {
@@ -1022,25 +1215,28 @@
     if (f.gold < NUKE_COST) return `Nukes cost ${NUKE_COST} gold`;
     if (target < 0) return 'Tap a target on the map';
     if (G.time < f.nextNuke) return `Silo reloading: ${Math.ceil(f.nextNuke - G.time)}s`;
+    // Fire from the best silo (highest level, then nearest).
     let silo = null;
     for (const b of G.buildings.values()) {
-      if (b.type === 'silo' && b.owner === f.id && (!silo || cellDist(b.cell, target) < cellDist(silo.cell, target))) silo = b;
+      if (b.type !== 'silo' || b.owner !== f.id) continue;
+      if (!silo || b.level > silo.level
+        || (b.level === silo.level && cellDist(b.cell, target) < cellDist(silo.cell, target))) silo = b;
     }
     f.gold -= NUKE_COST;
-    f.nextNuke = G.time + NUKE_COOLDOWN;
-    G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME });
-    if (!G.demo) toast(f.isPlayer ? '☢ Nuke launched!' : `☢ ${f.name} has launched a nuke!`);
+    f.nextNuke = G.time + NUKE_COOLDOWN[silo.level - 1];
+    G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: NUKE_RADIUS[silo.level - 1] });
+    announce({ k: 'nuke', f: f.id });
     return null;
   }
 
   function nukeImpact(m) {
     const x0 = cx(m.to);
     const y0 = cy(m.to);
-    const R = NUKE_RADIUS;
+    const R = m.radius;
     for (let dy = -R; dy <= R; dy++) {
       for (let dx = -R; dx <= R; dx++) {
         if (dx * dx + dy * dy > R * R) continue;
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const i = y * G.gw + x;
@@ -1053,6 +1249,7 @@
         setOwner(i, NEUTRAL);
         if (G.rad[i] <= 0) G.radList.push(i);
         G.rad[i] = RAD_TIME * (1 - Math.hypot(dx, dy) / (R + 1) * 0.5);
+        if (G.track) G.radEvents.push(i, Math.round(G.rad[i] * 10) / 10);
       }
     }
     addFx(m.to, R * 2.2, '255,240,200', 1400);
@@ -1090,6 +1287,7 @@
   }
 
   function addFx(cell, radius, rgb, dur) {
+    if (G.track) G.fxEvents.push([cell, radius, rgb, dur]);
     G.fx.push({ x: cx(cell) + 0.5, y: cy(cell) + 0.5, radius, rgb, start: performance.now(), dur });
   }
 
@@ -1116,7 +1314,7 @@
     const y0 = cy(i);
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const o = G.owner[y * G.gw + x];
@@ -1134,7 +1332,7 @@
       for (let dx = -5; dx <= 5; dx++) {
         const d = Math.hypot(dx, dy);
         if (d < 2 || d > 5) continue;
-        const x = x0 + dx;
+        const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const i = y * G.gw + x;
@@ -1166,10 +1364,10 @@
     const safe = candidates.filter((c) => {
       const x0 = cx(c);
       const y0 = cy(c);
-      const R = NUKE_RADIUS + 1;
+      const R = NUKE_RADIUS[Math.max(0, f.siloLevel - 1)] + 1;
       for (let dy = -R; dy <= R; dy += 2) {
         for (let dx = -R; dx <= R; dx += 2) {
-          const x = x0 + dx;
+          const x = wx(x0 + dx);
           const y = y0 + dy;
           if (x >= 0 && y >= 0 && x < G.gw && y < G.gh && G.owner[y * G.gw + x] === f.id) return false;
         }
@@ -1201,12 +1399,24 @@
         if (type === 'silo' && Math.random() < 0.6) return; // Saving up.
         continue;
       }
+      // Sometimes improve an existing building instead of adding another.
+      if (type !== 'mine' && Math.random() < 0.35 && aiUpgrade(f)) return;
       let at = -1;
       if (type === 'mine') at = arg;
       else if (type === 'city' || type === 'silo') at = interiorCell(f, type);
       else if (scan.samples.has(arg)) at = borderCell(f, type, scan.samples.get(arg));
       if (at >= 0 && build(f, type, at)) return;
     }
+    if (f.gold > 300) aiUpgrade(f);
+  }
+
+  // Upgrade priorities: mines, silos and cities pay off best.
+  function aiUpgrade(f) {
+    const order = { mine: 0, silo: 1, city: 2, artillery: 3, fort: 4 };
+    const options = [...G.buildings.values()]
+      .filter((b) => b.owner === f.id && b.level < MAX_LEVEL && upgradeCost(b) <= f.gold)
+      .sort((a, b) => order[a.type] - order[b.type] || a.level - b.level);
+    return options.length ? upgrade(f, options[0]) : false;
   }
 
   function aiBoat(f) {
@@ -1270,6 +1480,7 @@
 
   function tick() {
     G.time += TICK;
+    tallyBonuses();
     for (const f of G.factions) if (f.alive) grow(f);
     cancelOpposing();
     advanceAttacks();
@@ -1289,42 +1500,71 @@
       if (alive <= 1 || G.time > 300) newGame(true);
       return;
     }
-    const me = G.factions[0];
-    G.peakLand = Math.max(G.peakLand, me.cells / G.landCells);
-    if (!me.alive) endGame(false);
-    else if (G.factions.every((f) => f.isPlayer || !f.alive)) endGame(true);
+    G.peakLand = Math.max(G.peakLand, G.factions[myId].cells / G.landCells);
+    checkEnd();
   }
 
-  function endGame(won) {
+  // Host only. The war ends when one nation is left, or no humans are.
+  function checkEnd() {
+    const alive = G.factions.filter((f) => f.alive);
+    const humans = alive.filter((f) => f.isPlayer);
+    if (alive.length === 1 || !humans.length) {
+      const winner = alive.sort((a, b) => b.cells - a.cells)[0];
+      endGame(winner ? winner.id : -1);
+    } else if (!G.factions[myId].alive) {
+      showResult(false);
+    }
+  }
+
+  function endGame(winner) {
+    G.winner = winner;
     setState('over');
+    showResult(true);
+  }
+
+  // final: the war is over; otherwise we were knocked out and may watch on.
+  function showResult(final) {
+    const stage = final ? 2 : 1;
+    if ((G.resultStage || 0) >= stage) return;
+    G.resultStage = stage;
     G.mode = null;
     closeBuildSheet();
     updateBanner();
-    if (won) {
-      record.wins++;
-      if (record.fastest === null || G.time < record.fastest) record.fastest = G.time;
-    } else {
-      record.losses++;
+    const me = G.factions[myId];
+    const won = final && G.winner === myId;
+    if (!G.recorded) {
+      G.recorded = true;
+      if (won) {
+        record.wins++;
+        if (!G.mp && (record.fastest === null || G.time < record.fastest)) record.fastest = G.time;
+      } else {
+        record.losses++;
+      }
+      store.set('record', record);
     }
-    store.set('record', record);
     updateHud(true);
 
     const title = $('over-title');
     title.textContent = won ? 'Victory!' : 'Defeated';
     title.className = won ? 'win' : 'lose';
-    const leader = G.factions.filter((f) => f.alive && !f.isPlayer).sort((a, b) => b.cells - a.cells)[0];
-    $('over-sub').textContent = won
-      ? 'Every rival has fallen. The map is yours.'
-      : `Your last pixel fell${leader ? '. ' + leader.name + ' (' + leader.persona + ') leads the map' : ''}.`;
+    const winner = final && G.winner >= 0 ? G.factions[G.winner] : null;
+    const leader = G.factions.filter((f) => f.alive && f.id !== myId).sort((a, b) => b.cells - a.cells)[0];
+    let sub;
+    if (won) sub = 'Every rival has fallen. The map is yours.';
+    else if (me.alive && winner) sub = `${winner.name} has won the war.`;
+    else sub = `Your last pixel fell${leader ? '. ' + leader.name + (leader.persona ? ` (${leader.persona})` : '') + ' leads the map' : ''}.`;
+    $('over-sub').textContent = sub;
     const rows = [
       ['Time', fmtTime(G.time)],
       ['Peak territory', (G.peakLand * 100).toFixed(1) + '%'],
-      ['Rivals you eliminated', String(G.killedByPlayer)],
+      ['Rivals you eliminated', String(me.kills)],
       ['Difficulty', settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1)],
     ];
     $('over-stats').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    $('btn-watch').classList.toggle('hidden', final);
+    $('btn-again').classList.toggle('hidden', !!net.role);
     setTimeout(() => {
-      if (G && G.state === 'over') $('over').classList.add('show');
+      if (G && (G.resultStage || 0) >= stage) $('over').classList.add('show');
     }, 900);
   }
 
@@ -1334,36 +1574,90 @@
     return o === NEUTRAL ? 'unclaimed land' : G.factions[o].name;
   }
 
-  function playerAttack(i) {
-    if (i < 0) return;
-    const me = G.factions[0];
-    const o = G.owner[i];
-    if (o === WATER) {
-      toast('Tap land to attack. Boats sail automatically');
-      return;
-    }
-    if (o === 0) {
-      const bid = G.bAt[i];
-      if (bid >= 0) {
-        const b = BUILDINGS[G.buildings.get(bid).type];
-        toast(`${b.icon} ${b.label}: ${b.desc}`);
-      } else {
-        toast("That's already yours. Tap a neighbour");
-      }
-      return;
-    }
-    const amount = me.troops * settings.pct / 100;
-    if (amount < 2) {
-      toast('Not enough troops yet');
-      return;
-    }
-    if (neighbourScan(0).counts.has(o) && landReachable(0, i)) {
-      launch(0, o, amount, cx(i), cy(i));
+  const fail = (msg) => ({ ok: false, msg });
+
+  // Actions run on the host (or in single player) on behalf of any faction.
+  // Each returns { ok, msg } so a remote player can be told the outcome.
+  function actSpawn(fid, i) {
+    const f = G.factions[fid];
+    if (G.state !== 'spawn' || f.capital >= 0) return fail('');
+    const taken = G.factions.filter((o) => o.capital >= 0).map((o) => o.capital);
+    if (i < 0) {
+      i = G.real ? pickCountrySpawn(taken) : pickSpawn(taken, G.minSpawnDist);
     } else {
-      const err = launchBoat(0, i, amount);
-      toast(err || `⛵ ${fmt(amount)} troops set sail for ${targetName(o)}`);
+      if (G.owner[i] === WATER) return fail('Pick a spot on land');
+      if (G.owner[i] !== NEUTRAL) return fail(G.real ? `${G.factions[G.owner[i]].name} is already taken` : 'That land is taken');
+      const rival = G.real && G.factions.find((o) => o.capital >= 0 && G.country[o.capital] === G.country[i]);
+      if (rival) return fail(`${rival.name} is already taken`);
+      if (!distOk(i, taken, G.minSpawnDist * (G.real ? 0.25 : 0.55))) return fail('Too close to a rival. Pick somewhere else');
     }
-    buzz();
+    claimStart(f, i);
+    if (G.factions.every((o) => !o.isPlayer || o.capital >= 0)) setState('play');
+    const msg = G.real ? `You lead ${G.countryNames[G.country[i]]}. Expand, build, conquer!`
+      : 'Grab the grey land first, then strike!';
+    return { ok: true, msg, cell: i };
+  }
+
+  function actAttack(fid, i, pct) {
+    const me = G.factions[fid];
+    if (i < 0) return fail('');
+    const o = G.owner[i];
+    if (o === WATER) return fail('Tap land to attack. Boats sail automatically');
+    if (o === fid) return fail("That's already yours. Tap a neighbour");
+    const amount = me.troops * clamp(Number(pct) || 50, 1, 100) / 100;
+    if (amount < 2) return fail('Not enough troops yet');
+    if (neighbourScan(fid).counts.has(o) && landReachable(fid, i)) {
+      launch(fid, o, amount, cx(i), cy(i));
+      return { ok: true, msg: '' };
+    }
+    const err = launchBoat(fid, i, amount);
+    return err ? fail(err) : { ok: true, msg: `⛵ ${fmt(amount)} troops set sail for ${targetName(o)}` };
+  }
+
+  function actBuild(fid, type, i) {
+    const me = G.factions[fid];
+    if (!BUILDINGS[type]) return fail('');
+    const err = i < 0 ? 'Tap your land' : canPlace(me, type, i);
+    if (err) return fail(err);
+    if (!build(me, type, i)) return fail(`Not enough gold (${costOf(me, type)} needed)`);
+    return { ok: true, msg: `${BUILDINGS[type].icon} ${BUILDINGS[type].label} built` };
+  }
+
+  function actUpgrade(fid, id) {
+    const b = G.buildings.get(id);
+    if (!b || b.owner !== fid) return fail('');
+    if (!upgrade(G.factions[fid], b)) return fail(b.level >= MAX_LEVEL ? 'Fully upgraded' : 'Not enough gold');
+    return { ok: true, msg: `${BUILDINGS[b.type].icon} ${BUILDINGS[b.type].label} upgraded to level ${b.level}` };
+  }
+
+  function actNuke(fid, i) {
+    if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
+    if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
+    const err = launchNuke(G.factions[fid], i);
+    return err ? fail(err) : { ok: true, msg: '' };
+  }
+
+  function doAction(fid, act) {
+    if (!G || G.demo || !act || !G.factions[fid]) return fail('');
+    const cell = Number.isInteger(act.cell) && act.cell < G.n ? act.cell : -1;
+    if (act.a === 'spawn') return actSpawn(fid, cell);
+    if (G.state !== 'play' || !G.factions[fid].alive) return fail('');
+    if (act.a === 'attack') return actAttack(fid, cell, act.pct);
+    if (act.a === 'build') return actBuild(fid, act.building, cell);
+    if (act.a === 'upgrade') return actUpgrade(fid, act.id);
+    if (act.a === 'nuke') return actNuke(fid, cell);
+    return fail('');
+  }
+
+  // Perform an action for this device's player: here, or on the host.
+  function perform(act, after) {
+    const done = (res) => {
+      if (res.msg) toast(res.msg);
+      if (res.ok) buzz();
+      if (after) after(res);
+    };
+    if (net.role === 'client') netRequest(act, done);
+    else done(doAction(myId, act));
   }
 
   function buzz() {
@@ -1379,41 +1673,33 @@
     if (!G || G.demo) return;
     const i = cellAt(clientX, clientY);
     if (G.state === 'spawn') {
-      chooseSpawn(i);
+      if (G.factions[myId].capital >= 0) {
+        toast('Waiting for the other players to choose');
+        return;
+      }
+      if (i >= 0) perform({ a: 'spawn', cell: i }, (res) => res.ok && afterSpawn(res.cell));
       return;
     }
-    if (G.state !== 'play') return;
-    const me = G.factions[0];
+    if (G.state !== 'play' || !G.factions[myId].alive) return;
     if (G.mode && G.mode.type === 'build') {
-      const type = G.mode.building;
-      const err = i < 0 ? 'Tap your land' : canPlace(me, type, i);
-      if (err) {
-        toast(err);
-        return;
-      }
-      if (!build(me, type, i)) {
-        toast(`Not enough gold (${costOf(me, type)} needed)`);
-        return;
-      }
-      toast(`${BUILDINGS[type].icon} ${BUILDINGS[type].label} built`);
-      G.mode = null;
-      updateBanner();
-      buzz();
+      perform({ a: 'build', building: G.mode.building, cell: i }, (res) => {
+        if (!res.ok) return;
+        G.mode = null;
+        updateBanner();
+      });
       return;
     }
     if (G.mode && G.mode.type === 'nuke') {
-      if (i < 0 || G.owner[i] === WATER) {
-        toast('Aim at land');
-        return;
-      }
-      const err = launchNuke(me, i);
-      if (err) toast(err);
+      perform({ a: 'nuke', cell: i });
       G.mode = null;
       updateBanner();
-      buzz();
       return;
     }
-    playerAttack(i);
+    if (i >= 0 && G.owner[i] === myId && G.bAt[i] >= 0) {
+      openUpgradeSheet(G.buildings.get(G.bAt[i]));
+      return;
+    }
+    perform({ a: 'attack', cell: i, pct: settings.pct });
   }
 
   // ---------- Camera and touch input ----------
@@ -1422,15 +1708,21 @@
     if (!G) return -1;
     const gx = Math.floor((clientX * view.dpr - view.mapX) / view.cell);
     const gy = Math.floor((clientY * view.dpr - view.mapY) / view.cell);
-    if (gx < 0 || gy < 0 || gx >= G.gw || gy >= G.gh) return -1;
-    return gy * G.gw + gx;
+    const x = wx(gx);
+    if (x < 0 || gy < 0 || x >= G.gw || gy >= G.gh) return -1;
+    return gy * G.gw + x;
   }
 
   function clampView() {
     const a = view.area;
     const w = G.gw * view.cell;
     const h = G.gh * view.cell;
-    view.mapX = w <= a.w ? a.x + (a.w - w) / 2 : clamp(view.mapX, a.x + a.w - w, a.x);
+    if (G.wrap) {
+      // Pan forever east or west: keep the origin within one map width.
+      view.mapX = a.x - (((a.x - view.mapX) % w) + w) % w;
+    } else {
+      view.mapX = w <= a.w ? a.x + (a.w - w) / 2 : clamp(view.mapX, a.x + a.w - w, a.x);
+    }
     view.mapY = h <= a.h ? a.y + (a.h - h) / 2 : clamp(view.mapY, a.y + a.h - h, a.y);
   }
 
@@ -1555,12 +1847,15 @@
   // ---------- Rendering ----------
 
   function rebuildImage() {
-    const { gw, gh, owner, shade, factions, rad, country } = G;
+    const { gw, gh, owner, shade, factions, rad, country, wrap } = G;
     const d = img.data;
     for (let y = 0; y < gh; y++) {
       for (let x = 0; x < gw; x++) {
         const i = y * gw + x;
         const o = owner[i];
+        // Left/right neighbours (-1 at a non-wrapping edge).
+        const L = x > 0 ? i - 1 : wrap ? i + gw - 1 : -1;
+        const R = x < gw - 1 ? i + 1 : wrap ? i - gw + 1 : -1;
         let s = shade[i];
         const p = i * 4;
         let c;
@@ -1569,12 +1864,12 @@
         } else if (o === NEUTRAL) {
           c = NEUTRAL_RGB;
           // Faint country borders on unclaimed land.
-          if (country && ((x < gw - 1 && owner[i + 1] !== WATER && country[i + 1] !== country[i])
+          if (country && ((R >= 0 && owner[R] !== WATER && country[R] !== country[i])
             || (y < gh - 1 && owner[i + gw] !== WATER && country[i + gw] !== country[i]))) s *= 0.8;
         } else {
           const f = factions[o];
-          const edge = (x > 0 && owner[i - 1] !== o && owner[i - 1] !== WATER)
-            || (x < gw - 1 && owner[i + 1] !== o && owner[i + 1] !== WATER)
+          const edge = (L >= 0 && owner[L] !== o && owner[L] !== WATER)
+            || (R >= 0 && owner[R] !== o && owner[R] !== WATER)
             || (y > 0 && owner[i - gw] !== o && owner[i - gw] !== WATER)
             || (y < gh - 1 && owner[i + gw] !== o && owner[i + gw] !== WATER);
           c = edge ? f.border : f.color;
@@ -1601,12 +1896,24 @@
   // Grid coordinates (cell units) to canvas pixels.
   const sx = (gx) => view.mapX + gx * view.cell;
   const sy = (gy) => view.mapY + gy * view.cell;
-  const onScreen = (x, y, pad) => x > -pad && y > -pad && x < canvas.width + pad && y < canvas.height + pad;
+  // Screen x positions of every visible copy of something at x (World wraps).
+  function copies(x, pad) {
+    if (!G.wrap) return [x];
+    const w = G.gw * view.cell;
+    const out = [];
+    for (let k = x - Math.ceil((x + pad) / w) * w; k < canvas.width + pad; k += w) out.push(k);
+    return out;
+  }
+
+  let shiftX = 0;
+  const onScreen = (x, y, pad) => onScreenRaw(x + shiftX, y, pad);
+  const onScreenRaw = (x, y, pad) => x > -pad && y > -pad && x < canvas.width + pad && y < canvas.height + pad;
 
   function drawMap() {
     if (G.dirty) rebuildImage();
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(off, view.mapX, view.mapY, G.gw * view.cell, G.gh * view.cell);
+    const w = G.gw * view.cell;
+    for (const x of copies(view.mapX, w)) ctx.drawImage(off, x, view.mapY, w, G.gh * view.cell);
   }
 
   function drawDeposits() {
@@ -1614,8 +1921,8 @@
     ctx.lineWidth = Math.max(1, r * 0.3);
     for (const i of G.depositCells) {
       if (G.bAt[i] >= 0 || G.rad[i] > 0) continue;
-      const x = sx(cx(i) + 0.5);
       const y = sy(cy(i) + 0.5);
+      const x = sx(cx(i) + 0.5);
       if (!onScreen(x, y, r)) continue;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -1635,13 +1942,29 @@
       const y = sy(cy(b.cell) + 0.5);
       if (!onScreen(x, y, size)) continue;
       drawIcon(b.type, x, y, size, G.factions[b.owner].css);
-      if (b.type === 'fort' && b.owner === 0 && G.mode) {
+      if (b.level > 1) drawLevel(b.level, x + size * 0.42, y - size * 0.42, size * 0.42);
+      if (b.type === 'fort' && b.owner === myId && G.mode) {
         ctx.beginPath();
-        ctx.arc(x, y, FORT_RADIUS * view.cell, 0, Math.PI * 2);
+        ctx.arc(x, y, FORT_RADIUS[b.level - 1] * view.cell, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.35)';
         ctx.stroke();
       }
     }
+  }
+
+  function drawLevel(level, x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.75, 0, Math.PI * 2);
+    ctx.fillStyle = level >= 3 ? '#f59e0b' : '#e5e7eb';
+    ctx.fill();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = Math.max(1, r * 0.12);
+    ctx.stroke();
+    ctx.fillStyle = '#111';
+    ctx.font = `900 ${r * 1.05}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(level), x, y + r * 0.05);
   }
 
   // Hand-drawn icons: emoji fonts vary too much between phones to rely on.
@@ -1711,7 +2034,13 @@
   }
 
   function centroid(f) {
-    return { x: sx(f.sx / f.cells + 0.5), y: sy(f.sy / f.cells + 0.5) };
+    let gx = f.sx / f.cells;
+    if (G.wrap) {
+      // Circular mean, so a nation straddling the date line is labelled on it.
+      const ang = Math.atan2(f.sa, f.ca);
+      gx = ((ang / (2 * Math.PI)) * G.gw + G.gw) % G.gw;
+    }
+    return { x: sx(gx + 0.5), y: sy(f.sy / f.cells + 0.5) };
   }
 
   function drawLabels() {
@@ -1743,7 +2072,7 @@
       const a = b.path[Math.floor(p)];
       const c = b.path[Math.min(b.path.length - 1, Math.floor(p) + 1)];
       const t = p - Math.floor(p);
-      const x = sx(cx(a) + (cx(c) - cx(a)) * t + 0.5);
+      const x = sx(cx(a) + ddx(c, a) * t + 0.5);
       const y = sy(cy(a) + (cy(c) - cy(a)) * t + 0.5);
       if (!onScreen(x, y, size)) continue;
       const u = size / 10;
@@ -1771,7 +2100,7 @@
   function arcPoint(from, to, t, lift) {
     const x0 = cx(from) + 0.5;
     const y0 = cy(from) + 0.5;
-    const x1 = cx(to) + 0.5;
+    const x1 = x0 + ddx(to, from);
     const y1 = cy(to) + 0.5;
     const h = Math.hypot(x1 - x0, y1 - y0) * lift * Math.sin(Math.PI * t);
     return { x: sx(x0 + (x1 - x0) * t), y: sy(y0 + (y1 - y0) * t - h) };
@@ -1781,6 +2110,7 @@
     const dpr = view.dpr;
     for (const s of G.shells) {
       const p = arcPoint(s.from, s.to, Math.min(1, (s.t + acc) / s.dur), 0.35);
+      if (!onScreen(p.x, p.y, 10)) continue;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.5 * dpr, 0, Math.PI * 2);
       ctx.fillStyle = '#1f1f1f';
@@ -1803,10 +2133,10 @@
       ctx.fillStyle = '#ef4444';
       ctx.fill();
       // Target marker so everyone can see where it will land.
-      const tx = sx(cx(m.to) + 0.5);
+      const tx = sx(cx(m.from) + 0.5 + ddx(m.to, m.from));
       const ty = sy(cy(m.to) + 0.5);
       ctx.beginPath();
-      ctx.arc(tx, ty, NUKE_RADIUS * view.cell, 0, Math.PI * 2);
+      ctx.arc(tx, ty, m.radius * view.cell, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(239,68,68,0.8)';
       ctx.setLineDash([6 * dpr, 5 * dpr]);
       ctx.stroke();
@@ -1815,7 +2145,6 @@
   }
 
   function drawFx(now) {
-    G.fx = G.fx.filter((f) => now - f.start < f.dur);
     for (const f of G.fx) {
       const t = (now - f.start) / f.dur;
       const r = Math.max(4 * view.dpr, f.radius * view.cell * (0.3 + 0.7 * t));
@@ -1829,7 +2158,7 @@
   function drawAttackMarkers(now) {
     const pulse = 0.5 + 0.5 * Math.sin(now / 160);
     for (const a of G.attacks) {
-      if (a.from !== 0) continue;
+      if (a.from !== myId) continue;
       const r = (6 + pulse * 4) * view.dpr;
       ctx.strokeStyle = 'rgba(255,255,255,0.9)';
       ctx.lineWidth = 2 * view.dpr;
@@ -1844,14 +2173,23 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!G) return;
     drawMap();
-    drawDeposits();
-    drawBuildings();
-    drawBoats();
-    drawProjectiles();
-    drawFx(now);
-    if (G.demo) return;
-    drawLabels();
-    drawAttackMarkers(now);
+    G.fx = G.fx.filter((f) => now - f.start < f.dur);
+    for (const origin of copies(view.mapX, G.gw * view.cell)) {
+      shiftX = origin - view.mapX;
+      ctx.save();
+      ctx.translate(shiftX, 0);
+      drawDeposits();
+      drawBuildings();
+      drawBoats();
+      drawProjectiles();
+      drawFx(now);
+      if (!G.demo) {
+        drawLabels();
+        drawAttackMarkers(now);
+      }
+      ctx.restore();
+    }
+    shiftX = 0;
   }
 
   // ---------- HUD, banners and the build sheet ----------
@@ -1861,9 +2199,14 @@
     const text = $('banner-text');
     const btn = $('btn-banner');
     if (!G || G.demo) return;
-    if (G.state === 'spawn') {
+    if (G.state === 'spawn' && G.factions[myId].capital >= 0) {
+      text.innerHTML = 'Waiting for the other players to choose…';
+      btn.classList.add('hidden');
+      banner.dataset.kind = 'spawn';
+    } else if (G.state === 'spawn') {
       text.innerHTML = G.real ? '<strong>Tap a country</strong> to lead it' : '<strong>Tap the map</strong> to place your capital';
       btn.textContent = 'Random';
+      btn.classList.remove('hidden');
       banner.dataset.kind = 'spawn';
     } else if (G.mode && G.mode.type === 'build') {
       const b = BUILDINGS[G.mode.building];
@@ -1881,7 +2224,7 @@
 
   function updateHud(force) {
     if (!G || G.demo) return;
-    const me = G.factions[0];
+    const me = G.factions[myId];
     $('troops').textContent = fmt(me.troops);
     $('troops-max').textContent = '/ ' + fmt(maxTroops(me));
     $('gold').textContent = fmt(me.gold);
@@ -1892,11 +2235,11 @@
     nuke.classList.toggle('hidden', !me.built.silo);
     const reload = Math.ceil(me.nextNuke - G.time);
     nuke.disabled = me.gold < NUKE_COST || reload > 0 || G.state !== 'play';
-    nuke.textContent = reload > 0 ? `☢ ${reload}s` : `☢ ${NUKE_COST}`;
+    nuke.textContent = reload > 0 ? `☢ ${reload}s` : `☢ ${NUKE_COST}g`;
 
-    const mine = G.attacks.filter((a) => a.from === 0);
-    const boats = G.boats.filter((b) => b.owner === 0);
-    const incoming = G.attacks.filter((a) => a.to === 0);
+    const mine = G.attacks.filter((a) => a.from === myId);
+    const boats = G.boats.filter((b) => b.owner === myId);
+    const incoming = G.attacks.filter((a) => a.to === myId);
     let hint = 'Tap land to attack · drag to pan · pinch to zoom';
     if (G.state === 'spawn') hint = G.real ? 'Choose the country you will lead' : 'Choose where your empire begins';
     else if (incoming.length) {
@@ -1915,7 +2258,7 @@
         .slice(0, 6)
         .map((f) => {
           const pc = (f.cells / G.landCells * 100).toFixed(1);
-          return `<li class="${f.isPlayer ? 'me' : ''}"><span class="sw" style="background:${f.css}"></span>`
+          return `<li class="${f.id === myId ? 'me' : ''}"><span class="sw" style="background:${f.css}"></span>`
             + `${f.name}<span class="pc">${pc}%</span></li>`;
         });
       $('board').innerHTML = rows.join('');
@@ -1923,24 +2266,57 @@
     }
   }
 
+  // The sheet shows either the build menu or one building's upgrade panel.
+  let sheetBuilding = null;
+
   function renderBuildSheet() {
-    const me = G.factions[0];
+    const me = G.factions[myId];
+    const b = sheetBuilding && G.buildings.get(sheetBuilding);
+    if (sheetBuilding && (!b || b.owner !== myId)) {
+      closeBuildSheet();
+      return;
+    }
+    if (b) {
+      const info = BUILDINGS[b.type];
+      $('sheet-title').textContent = `${info.icon} ${info.label} · level ${b.level}`;
+      let html = `<p class="now">${info.stats(b.level)}</p>`;
+      if (b.level < MAX_LEVEL) {
+        const cost = upgradeCost(b);
+        html += `<button data-upgrade="${b.id}" ${me.gold < cost ? 'disabled' : ''}>`
+          + `<span class="bi">⬆️</span><span class="bt"><b>Upgrade to level ${b.level + 1}</b>`
+          + `<small>${info.stats(b.level + 1)}</small></span><span class="bc">${fmt(cost)}g</span></button>`;
+      } else {
+        html += '<p class="now">Fully upgraded.</p>';
+      }
+      $('build-list').innerHTML = html;
+      return;
+    }
+    $('sheet-title').textContent = 'Build';
     $('build-list').innerHTML = BUILD_ORDER.map((type) => {
-      const b = BUILDINGS[type];
+      const info = BUILDINGS[type];
       const cost = costOf(me, type);
       return `<button data-type="${type}" ${me.gold < cost ? 'disabled' : ''}>`
-        + `<span class="bi">${b.icon}</span><span class="bt"><b>${b.label}</b><small>${b.desc}</small></span>`
+        + `<span class="bi">${info.icon}</span><span class="bt"><b>${info.label}</b><small>${info.stats(1)}</small></span>`
         + `<span class="bc">${fmt(cost)}g</span></button>`;
-    }).join('');
+    }).join('') + '<p class="now">Tip: tap one of your buildings to upgrade it.</p>';
   }
 
   function openBuildSheet() {
     if (!G || G.state !== 'play') return;
+    sheetBuilding = null;
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function openUpgradeSheet(b) {
+    if (!G || G.state !== 'play') return;
+    sheetBuilding = b.id;
     renderBuildSheet();
     $('build-sheet').classList.add('show');
   }
 
   function closeBuildSheet() {
+    sheetBuilding = null;
     $('build-sheet').classList.remove('show');
   }
 
@@ -1949,7 +2325,7 @@
   function frame(now) {
     const dt = Math.min(0.25, (now - last) / 1000);
     last = now;
-    if (G && ((G.demo && G.state === 'menu') || G.state === 'play')) {
+    if (G && net.role !== 'client' && ((G.demo && G.state === 'menu') || G.state === 'play')) {
       acc += dt * (G.demo ? 1.5 : speed);
       let steps = 0;
       while (acc >= TICK && steps < 40) {
@@ -1958,6 +2334,10 @@
         steps++;
         if (!G || G.state === 'over') break;
       }
+    }
+    if (net.role === 'host' && now - net.lastSend > 100) {
+      net.lastSend = now;
+      netBroadcast();
     }
     render(now);
     updateHud(false);
@@ -2004,8 +2384,10 @@
   $('btn-play').addEventListener('click', () => newGame(false));
   $('btn-again').addEventListener('click', () => newGame(false));
   $('btn-restart').addEventListener('click', () => newGame(false));
+  $('btn-watch').addEventListener('click', () => $('over').classList.remove('show'));
 
   function toMenu() {
+    netLeave();
     $('over').classList.remove('show');
     syncMenu();
     newGame(true);
@@ -2016,8 +2398,7 @@
   $('btn-banner').addEventListener('click', () => {
     if (!G) return;
     if (G.state === 'spawn') {
-      const taken = G.factions.filter((f) => !f.isPlayer).map((f) => f.capital);
-      startWithCapital(G.real ? pickCountrySpawn(taken) : pickSpawn(taken, G.minSpawnDist));
+      perform({ a: 'spawn', cell: -1 }, (res) => res.ok && afterSpawn(res.cell));
     } else {
       G.mode = null;
     }
@@ -2032,6 +2413,10 @@
   $('build-list').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.disabled || !G) return;
+    if (b.dataset.upgrade) {
+      perform({ a: 'upgrade', id: Number(b.dataset.upgrade) }, () => renderBuildSheet());
+      return;
+    }
     G.mode = { type: 'build', building: b.dataset.type };
     closeBuildSheet();
     updateBanner();
@@ -2046,6 +2431,12 @@
 
   function pause() {
     if (!G || G.demo || (G.state !== 'play' && G.state !== 'spawn')) return;
+    if (net.role) {
+      // Multiplayer never stops the clock: just show the menu.
+      closeBuildSheet();
+      document.body.dataset.state = 'paused';
+      return;
+    }
     pausedFrom = G.state;
     pointers.clear();
     gesture = null;
@@ -2055,7 +2446,8 @@
 
   $('btn-pause').addEventListener('click', pause);
   $('btn-resume').addEventListener('click', () => {
-    if (G && G.state === 'paused') setState(pausedFrom);
+    if (net.role && G) document.body.dataset.state = G.state;
+    else if (G && G.state === 'paused') setState(pausedFrom);
   });
 
   $('btn-speed').addEventListener('click', () => {
@@ -2064,7 +2456,7 @@
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) pause();
+    if (document.hidden && !net.role) pause();
   });
 
   // Android back button: cancel a build/nuke, else pause rather than leave.
@@ -2109,9 +2501,403 @@
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 
+  // ---------- Multiplayer (WebRTC via PeerJS) ----------
+  //
+  // A free public PeerJS server introduces the devices; game traffic then
+  // flows directly between them (over the LAN when they share a network).
+  // The host runs the simulation and streams snapshots ~10 times a second;
+  // clients only render and send their taps as actions.
+
+  const PEER_PREFIX = 'pixelwar-v1-';
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+  function playerName() {
+    const n = ($('mp-name').value || '').trim().replace(/[<>&"]/g, '').slice(0, 12);
+    return n || 'Player';
+  }
+
+  const cleanName = (n) => String(n || 'Player').replace(/[<>&"]/g, '').trim().slice(0, 12) || 'Player';
+
+  function showLobby(status) {
+    document.body.dataset.state = 'lobby';
+    $('lobby-status').textContent = status || '';
+    $('lobby-code').textContent = net.code || '····';
+    $('btn-start').classList.toggle('hidden', net.role !== 'host');
+    $('lobby-note').textContent = net.role === 'host'
+      ? 'Friends open Pixel War on any device (browser, Android or Windows), tap Join and enter this code. '
+        + 'The map, AI opponents and difficulty come from your menu settings.'
+      : 'Waiting for the host to start the game…';
+  }
+
+  function renderLobby(players) {
+    $('lobby-code').textContent = net.code;
+    $('lobby-players').innerHTML = players.map((p, k) =>
+      `<li><span class="sw" style="background:${FACTIONS[k].css || `rgb(${FACTIONS[k].color.join(',')})`}"></span>${p}${k === 0 ? ' (host)' : ''}</li>`).join('');
+    $('btn-start').disabled = players.length < 2;
+    $('lobby-status').textContent = `${players.length} player${players.length > 1 ? 's' : ''} in the room`;
+  }
+
+  function lobbyPlayers() {
+    return [playerName()].concat([...net.conns.values()].map((p) => p.name));
+  }
+
+  function lobbyBroadcast() {
+    const players = lobbyPlayers();
+    renderLobby(players);
+    for (const p of net.conns.values()) if (p.conn.open) p.conn.send({ t: 'lobby', code: net.code, players });
+  }
+
+  function hostGame() {
+    if (!window.Peer) {
+      toast('Multiplayer could not load. Check your connection');
+      return;
+    }
+    netLeave();
+    net.role = 'host';
+    net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+    document.body.classList.add('mp');
+    showLobby('Creating a room…');
+    const peer = new window.Peer(PEER_PREFIX + net.code);
+    net.peer = peer;
+    peer.on('open', () => {
+      if (net.opened) return;
+      net.opened = true;
+      if (document.body.dataset.state === 'lobby') showLobby('');
+      lobbyBroadcast();
+    });
+    keepAlive(peer);
+    net.peer.on('connection', (conn) => {
+      conn.on('data', (msg) => hostReceive(conn, msg));
+      conn.on('close', () => hostDrop(conn));
+      conn.on('error', () => hostDrop(conn));
+    });
+    peer.on('error', (e) => {
+      console.warn('[net] host error:', e.type, e.message);
+      if (net.peer !== peer) return;
+      if (e.type === 'unavailable-id' && !net.opened) hostGame();
+      else if (!net.opened && e.type !== 'peer-unavailable') netFail('Multiplayer connection failed. Check your internet connection');
+    });
+  }
+
+  // Losing the matchmaking server (e.g. the app went into the background)
+  // doesn't affect connected players, so quietly reconnect.
+  function keepAlive(peer) {
+    peer.on('disconnected', () => {
+      console.warn('[net] signalling server lost; reconnecting');
+      setTimeout(() => {
+        if (net.peer === peer && !peer.destroyed && peer.disconnected) peer.reconnect();
+      }, 1500);
+    });
+  }
+
+  function hostReceive(conn, msg) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.t === 'hello') {
+      const started = G && !G.demo;
+      if (started || net.conns.size >= FACTIONS.length - 1) {
+        conn.send({ t: 'refused', why: started ? 'That game has already started' : 'That room is full' });
+        setTimeout(() => conn.close(), 500);
+        return;
+      }
+      net.conns.set(conn.peer, { conn, name: cleanName(msg.name), fid: -1 });
+      lobbyBroadcast();
+    } else if (msg.t === 'act') {
+      const p = net.conns.get(conn.peer);
+      if (!p || p.fid < 0) return;
+      const res = doAction(p.fid, msg.act);
+      conn.send(Object.assign({ t: 'res', seq: msg.seq }, res));
+    }
+  }
+
+  function hostDrop(conn) {
+    const p = net.conns.get(conn.peer);
+    if (!p) return;
+    net.conns.delete(conn.peer);
+    if (p.fid >= 0 && G && !G.demo) {
+      // An AI takes over the departed player's nation.
+      const f = G.factions[p.fid];
+      f.isPlayer = false;
+      f.persona = 'Balanced';
+      f.aggr = 0.55;
+      f.nextThink = G.time + 1;
+      if (G.state === 'spawn' && f.capital < 0) actSpawn(f.id, -1);
+      if (G.state === 'spawn' && G.factions.every((o) => !o.isPlayer || o.capital >= 0)) setState('play');
+      announce({ k: 'msg', text: `${p.name} left. An AI takes over ${f.name}` });
+    } else {
+      lobbyBroadcast();
+    }
+  }
+
+  function startMultiplayer() {
+    if (net.role !== 'host' || !net.conns.size) return;
+    newGame(false, lobbyPlayers());
+    let fid = 1;
+    for (const p of net.conns.values()) {
+      p.fid = fid++;
+      p.conn.send({
+        t: 'start',
+        myId: p.fid,
+        kind: G.kind,
+        seed: G.seed,
+        gw: G.gw,
+        gh: G.gh,
+        difficulty: settings.difficulty,
+        factions: G.factions.map((f) => ({ name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona })),
+        snap: snapshot(true),
+      });
+    }
+    clearTracking();
+    net.sentBver = G.bver;
+  }
+
+  function rle(arr) {
+    const out = [];
+    for (let i = 0; i < arr.length;) {
+      let j = i + 1;
+      while (j < arr.length && arr[j] === arr[i]) j++;
+      out.push(arr[i], j - i);
+      i = j;
+    }
+    return out;
+  }
+
+  function snapshot(full) {
+    const cells = [];
+    if (!full) for (const i of G.changed) cells.push(i, G.owner[i]);
+    const rad = [];
+    if (full) for (const i of G.radList) rad.push(i, G.rad[i]);
+    return {
+      t: 'snap',
+      time: G.time,
+      state: G.state,
+      winner: G.winner,
+      own: full ? rle(G.owner) : null,
+      cells,
+      rad: full ? rad : G.radEvents,
+      f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
+        Math.max(0, f.nextNuke - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
+      b: full || G.bver !== net.sentBver
+        ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp]) : null,
+      boats: G.boats.map((b) => {
+        const k = Math.floor(b.pos);
+        return [b.owner, b.path[k], b.path[Math.min(b.path.length - 1, k + 1)], b.pos - k, Math.round(b.troops)];
+      }),
+      shells: G.shells.map((s) => [s.from, s.to, s.t, s.dur]),
+      missiles: G.missiles.map((m) => [m.from, m.to, m.t, m.dur, m.radius]),
+      attacks: G.attacks.map((a) => [a.from, a.to, Math.round(a.troops), a.aimX, a.aimY]),
+      fx: G.fxEvents,
+      ev: G.events,
+    };
+  }
+
+  function clearTracking() {
+    for (const i of G.changed) G.changedMark[i] = 0;
+    G.changed = [];
+    G.radEvents = [];
+    G.fxEvents = [];
+    G.events = [];
+  }
+
+  function netBroadcast() {
+    if (!G || G.demo || !G.track) return;
+    if (net.conns.size) {
+      const snap = snapshot(false);
+      for (const p of net.conns.values()) if (p.fid >= 0 && p.conn.open) p.conn.send(snap);
+      net.sentBver = G.bver;
+    }
+    clearTracking();
+  }
+
+  function joinGame(code) {
+    code = String(code || '').trim().toUpperCase();
+    if (!/^[A-Z]{4}$/.test(code)) {
+      toast('Room codes are 4 letters');
+      return;
+    }
+    if (!window.Peer) {
+      toast('Multiplayer could not load. Check your connection');
+      return;
+    }
+    netLeave();
+    net.role = 'client';
+    net.code = code;
+    document.body.classList.add('mp', 'mp-client');
+    showLobby('Connecting…');
+    $('lobby-players').innerHTML = '';
+    const peer = new window.Peer();
+    net.peer = peer;
+    keepAlive(peer);
+    peer.on('open', () => {
+      if (net.host) return;
+      const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
+      net.host = conn;
+      conn.on('open', () => conn.send({ t: 'hello', name: playerName() }));
+      conn.on('data', clientReceive);
+      conn.on('close', () => {
+        if (net.role === 'client') netFail('The host has left the game');
+      });
+    });
+    peer.on('error', (e) => {
+      console.warn('[net] client error:', e.type, e.message);
+      if (net.peer !== peer) return;
+      if (e.type === 'peer-unavailable') netFail(`No game found with code ${code}`);
+      else if (!net.host || !net.host.open) netFail('Could not connect. Check your internet connection');
+    });
+  }
+
+  function clientReceive(msg) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.t === 'lobby') {
+      net.code = msg.code;
+      renderLobby(msg.players);
+    } else if (msg.t === 'refused') {
+      netFail(msg.why);
+    } else if (msg.t === 'start') {
+      clientStart(msg);
+    } else if (msg.t === 'snap') {
+      if (G && !G.demo) applySnapshot(msg);
+    } else if (msg.t === 'res') {
+      const cb = net.pending.get(msg.seq);
+      net.pending.delete(msg.seq);
+      if (cb) cb(msg);
+    }
+  }
+
+  function netRequest(act, cb) {
+    if (!net.host || !net.host.open) {
+      cb(fail('Not connected to the host'));
+      return;
+    }
+    const seq = ++net.seq;
+    net.pending.set(seq, cb);
+    net.host.send({ t: 'act', seq, act });
+  }
+
+  function clientStart(msg) {
+    $('over').classList.remove('show');
+    settings.difficulty = DIFFICULTY[msg.difficulty] ? msg.difficulty : settings.difficulty;
+    myId = msg.myId;
+    buildWorld(msg.kind, msg.seed, msg.gw, msg.gh, false);
+    G.mp = true;
+    G.factions = msg.factions.map((f, id) => makeFaction(id, {
+      name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona,
+    }));
+    setState('spawn');
+    view.zoomRel = 0;
+    view.cell = 0;
+    resize();
+    applySnapshot(msg.snap);
+    updateBanner();
+    updateHud(true);
+  }
+
+  function applySnapshot(s) {
+    const dt = Math.max(0, s.time - G.time);
+    G.time = s.time;
+    if (s.own) {
+      let p = 0;
+      for (let k = 0; k < s.own.length; k += 2) {
+        for (let r = 0; r < s.own[k + 1]; r++, p++) assignCell(p, s.own[k]);
+      }
+    }
+    for (let k = 0; k < s.cells.length; k += 2) assignCell(s.cells[k], s.cells[k + 1]);
+    // Fallout decays locally; the host only reports fresh contamination.
+    if (dt && G.radList.length) {
+      G.radList = G.radList.filter((i) => (G.rad[i] -= dt) > 0 || ((G.rad[i] = 0), false));
+      G.dirty = true;
+    }
+    for (let k = 0; k < s.rad.length; k += 2) {
+      if (G.rad[s.rad[k]] <= 0) G.radList.push(s.rad[k]);
+      G.rad[s.rad[k]] = s.rad[k + 1];
+      G.dirty = true;
+    }
+    s.f.forEach((v, id) => {
+      const f = G.factions[id];
+      [f.troops, f.gold] = [v[0], v[1]];
+      f.alive = !!v[2];
+      f.capital = v[3];
+      f.nextNuke = G.time + v[4];
+      f.kills = v[5];
+      f.name = v[6];
+      f.isPlayer = !!v[7];
+    });
+    if (s.b) {
+      for (const b of G.buildings.values()) G.bAt[b.cell] = -1;
+      G.buildings = new Map();
+      for (const f of G.factions) for (const k of Object.keys(f.built)) f.built[k] = 0;
+      for (const [id, type, cell, owner, level, hp] of s.b) {
+        G.buildings.set(id, { id, type, cell, owner, level, hp });
+        G.bAt[cell] = id;
+        G.factions[owner].built[type]++;
+      }
+    }
+    G.boats = s.boats.map(([owner, a, c, pos, troops]) => ({ owner, path: [a, c], pos, troops }));
+    G.shells = s.shells.map(([from, to, t, dur]) => ({ from, to, t, dur }));
+    G.missiles = s.missiles.map(([from, to, t, dur, radius]) => ({ from, to, t, dur, radius }));
+    G.attacks = s.attacks.map(([from, to, troops, aimX, aimY]) => ({ from, to, troops, aimX, aimY }));
+    for (const [cell, radius, rgb, dur] of s.fx) addFx(cell, radius, rgb, dur);
+    for (const ev of s.ev) showEvent(ev);
+    tallyBonuses();
+
+    if (s.state !== G.state && G.state !== 'over') {
+      setState(s.state);
+      updateBanner();
+    }
+    const me = G.factions[myId];
+    if (me.capital >= 0) afterSpawn(me.capital);
+    G.peakLand = Math.max(G.peakLand, me.cells / G.landCells);
+    G.winner = s.winner;
+    if (s.state === 'over') showResult(true);
+    else if (!me.alive && me.capital >= 0) showResult(false);
+  }
+
+  function netLeave() {
+    const role = net.role;
+    net.role = null;
+    try {
+      if (net.host) net.host.close();
+      for (const p of net.conns.values()) p.conn.close();
+      if (net.peer) net.peer.destroy();
+    } catch (e) {
+      // Already closed.
+    }
+    net.peer = null;
+    net.host = null;
+    net.conns.clear();
+    net.pending.clear();
+    net.code = '';
+    net.opened = false;
+    myId = 0;
+    document.body.classList.remove('mp', 'mp-client');
+    if (role && document.body.dataset.state === 'lobby') document.body.dataset.state = G ? G.state : 'menu';
+  }
+
+  function netFail(msg) {
+    toast(msg);
+    toMenu();
+  }
+
+  $('btn-host').addEventListener('click', () => {
+    store.set('name', playerName());
+    hostGame();
+  });
+  $('btn-join').addEventListener('click', () => {
+    store.set('name', playerName());
+    joinGame($('mp-code').value);
+  });
+  $('mp-code').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('btn-join').click();
+  });
+  $('btn-start').addEventListener('click', startMultiplayer);
+  $('btn-leave').addEventListener('click', toMenu);
+  $('mp-name').value = store.get('name', '');
+
   // Exposed for debugging and automated play-testing.
   window.pixelWar = {
     get game() { return G; },
+    get myId() { return myId; },
+    net,
+    doAction,
     view,
     // Client (CSS pixel) position of a cell's centre, for automated tests.
     clientPos: (i) => ({ x: (sx(cx(i) + 0.5)) / view.dpr, y: (sy(cy(i) + 0.5)) / view.dpr }),
@@ -2120,6 +2906,7 @@
     build,
     launchNuke,
     launchBoat,
+    upgrade,
   };
 
   syncMenu();

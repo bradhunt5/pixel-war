@@ -1,0 +1,49 @@
+{
+  "name": "pixel-war",
+  "version": "1.0.0",
+  "description": "Pixel War: a territory-conquest strategy game",
+  "author": "Brad Hunt",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "web": "node scripts/copy-web.js",
+    "desktop": "npm run web && electron .",
+    "build:win": "npm run web && electron-builder --win --publish never",
+    "build:android": "npm run web && cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "electron": "^31.7.0",
+    "electron-builder": "^24.13.3",
+    "peerjs": "^1.5.4"
+  },
+  "build": {
+    "appId": "io.github.bradhunt5.pixelwar",
+    "productName": "Pixel War",
+    "files": [
+      "electron/**",
+      "www/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "icon": "icons/icon-512.png",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "PixelWar-Setup.exe"
+    },
+    "portable": {
+      "artifactName": "PixelWar-portable.exe"
+    }
+  }
+}

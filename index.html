@@ -56,7 +56,7 @@
 
   <section id="build-sheet" class="sheet" aria-label="Build">
     <div class="sheet-head">
-      <strong>Build</strong>
+      <strong id="sheet-title">Build</strong>
       <button id="btn-build-close" class="icon-btn" aria-label="Close">✕</button>
     </div>
     <div id="build-list" class="build-list"></div>
@@ -103,6 +103,16 @@
       </div>
 
       <button id="btn-play" class="primary">Play</button>
+
+      <div class="field mp-box">
+        <span class="field-label">Multiplayer</span>
+        <input id="mp-name" class="text" maxlength="12" placeholder="Your name" autocomplete="nickname">
+        <div class="mp-row">
+          <button id="btn-host" class="secondary">Host game</button>
+          <input id="mp-code" class="text code-in" maxlength="4" placeholder="CODE" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          <button id="btn-join" class="secondary">Join</button>
+        </div>
+      </div>
       <button id="btn-install" class="secondary hidden">Install app</button>
 
       <details class="how">
@@ -113,6 +123,7 @@
           <li>Set the <b>Send</b> slider, then <b>tap</b> land to attack. Across water, your troops sail there by boat ⛵.</li>
           <li><b>Drag</b> to pan and <b>pinch</b> to zoom.</li>
           <li><b>🏗️ Build</b> spends gold: 🏙️ cities raise your troop cap, ⛏️ mines on gold deposits (yellow dots) earn gold, 🛡️ forts make nearby land 3× harder to take, 🎯 artillery shells enemies in range, and ☢️ silos let you launch nukes.</li>
+          <li><b>Tap one of your buildings</b> to upgrade it (up to level 3): bigger nukes and faster reloads, richer mines, longer-range artillery, stronger forts and bigger cities.</li>
           <li>Captured buildings change hands. Nuked land stays irradiated for a while.</li>
           <li>Wipe out every rival to win. Lose all your land and it's over.</li>
         </ul>
@@ -121,9 +132,22 @@
     </div>
   </section>
 
+  <section id="lobby" class="overlay">
+    <div class="panel">
+      <h2>Multiplayer</h2>
+      <p id="lobby-status" class="tag"></p>
+      <div class="room">Room code<span id="lobby-code" class="code">····</span></div>
+      <ol id="lobby-players" class="players"></ol>
+      <p id="lobby-note" class="tag small"></p>
+      <button id="btn-start" class="primary" disabled>Start game</button>
+      <button id="btn-leave" class="secondary">Leave</button>
+    </div>
+  </section>
+
   <section id="pause" class="overlay">
     <div class="panel">
       <h2>Paused</h2>
+      <p class="tag mp-only">Multiplayer games keep running while this menu is open.</p>
       <button id="btn-resume" class="primary">Resume</button>
       <button id="btn-restart" class="secondary">Restart</button>
       <button id="btn-quit" class="secondary">Main menu</button>
@@ -135,11 +159,14 @@
       <h2 id="over-title">Victory</h2>
       <p id="over-sub" class="tag"></p>
       <dl id="over-stats" class="stats"></dl>
+      <button id="btn-watch" class="primary hidden">Keep watching</button>
       <button id="btn-again" class="primary">Play again</button>
       <button id="btn-menu" class="secondary">Main menu</button>
     </div>
   </section>
 
+  <script src="vendor/peerjs.min.js"></script>
+  <script src="localnet.js"></script>
   <script src="maps/world.js"></script>
   <script src="maps/europe.js"></script>
   <script src="game.js"></script>

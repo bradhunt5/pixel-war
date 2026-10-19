@@ -2,9 +2,8 @@
 
 A territory-conquest strategy game in the spirit of Roblox's *Pixel Conquest*.
 It's built for phones, but it plays in any modern browser. It's plain HTML5,
-CSS and JavaScript with no build step and no dependencies. You can install it
-on Android as a Progressive Web App (PWA). Once installed it runs full-screen
-and offline.
+CSS and JavaScript with no build step. It also ships as an Android APK and a
+Windows app, and up to six players can play together on any mix of devices.
 
 ## How to play
 
@@ -18,13 +17,16 @@ and offline.
    then **tap** the land you want to attack:
    - Grey land is unclaimed and cheap to take.
    - Enemy land costs more the more troops that nation holds.
-   - The attack starts nearest the spot you tapped and spreads along the
-     shared border.
+   - The attack pushes into the stretch of border nearest the spot you
+     tapped, so tap where you want to break through. Tap again somewhere
+     else to change direction.
    - If the target is across water, your troops **sail there by boat ⛵**.
      They land on the nearest coast and push inland. You can have up to
      three boats at sea at once.
 5. **Drag** to pan the map and **pinch** to zoom (use the mouse wheel on a
-   computer).
+   computer). The World map wraps round east to west like a globe. Keep
+   panning and the Pacific joins up, so Alaska borders Russia's far east and
+   boats take the shortest way across.
 6. Troops on the march leave your home weaker. Two attacks between the same
    pair of nations cancel each other out.
 7. Wipe out every rival to win. If you lose your last pixel, you lose.
@@ -35,19 +37,32 @@ Tap **🏗️ Build**, choose a building, then tap a spot in your own land.
 Buildings cost gold, and each extra one of the same type costs a bit more.
 They must sit at least two cells apart. Captured buildings change hands.
 
-| Building | Cost | Effect |
-| --- | --- | --- |
-| 🏙️ City | 250 | +1,500 troop cap, faster troop growth, +1.5 gold/s |
-| ⛏️ Gold mine | 120 | Only on a gold deposit (the yellow dots); +4 gold/s |
-| 🛡️ Fort | 180 | Your land within 6 cells is 3× harder to capture |
-| 🎯 Artillery | 350 | Shells enemy land and buildings up to 22 cells away every few seconds. Hits kill troops and blast land back to neutral |
-| ☢️ Nuclear silo | 1,200 | Unlocks the **☢ Nuke** button |
+| Building | Cost | Level 1 | Level 2 | Level 3 |
+| --- | --- | --- | --- | --- |
+| 🏙️ City | 250 | +1,500 troop cap, +2 troops/s, +1.5 gold/s | +3,000 cap, +4 troops/s, +3 gold/s | +5,000 cap, +7 troops/s, +5 gold/s |
+| ⛏️ Gold mine | 120 | +4 gold/s | +7 gold/s | +11 gold/s |
+| 🛡️ Fort | 180 | Land within 6 cells 3× harder to take | 8 cells, 4× | 10 cells, 5× |
+| 🎯 Artillery | 350 | Range 22, fires every 3.5 s | Range 28, every 2.4 s | Range 34, every 1.5 s, bigger blast |
+| ☢️ Nuclear silo | 1,200 | Nuke blast radius 7, 30 s reload | Radius 10, 20 s reload | Radius 13, 12 s reload |
 
-**Nukes** cost 900 gold, and each silo owner has a 30-second reload. Tap
-**☢**, then tap any target. The missile takes three seconds to arrive and
-everyone can see where it will land. It wipes out everything within 7 cells:
-troops, buildings and ownership. The land stays irradiated (green) for about
-45 seconds, and while it does it costs 4× as many troops to take.
+Gold mines only go on gold deposits (the yellow dots).
+
+**Upgrades:** tap one of your buildings to see what it does now and what the
+next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
+base price and level 3 costs 2.4×. A small badge on the map shows a
+building's level. Each upgrade also lets the building take one more
+artillery hit.
+
+**Artillery** shells enemy land and buildings within range. Hits kill troops
+and blast land back to neutral.
+
+**Nukes** cost 900 gold. Tap **☢**, then tap an enemy target (you can't nuke
+your own land). A nuke fires from your best silo, so its blast size and
+reload depend on that silo's level. The missile takes three seconds to
+arrive and everyone can see where it will land. It wipes out troops,
+buildings and ownership within its blast radius. The land stays irradiated
+(green) for about 45 seconds, and while it does it costs 4× as many troops
+to take.
 
 The HUD shows troops and troop cap, gold, your share of the land, the clock
 and a leaderboard. The bottom line lists your attacks and boats in progress,
@@ -62,61 +77,108 @@ aggressive), a **Balanced** rival and a **Turtle** (saves up, expands slowly).
 With four or five opponents, a **Raider** and a **Settler** join in.
 Difficulty changes how fast rivals earn troops and gold (Easy ×0.8, Normal
 ×1.0, Hard ×1.2), how aggressive they are, and how keen they are to target
-you. AI nations build mines, cities, forts and artillery, and send boats
-overseas. On Normal the more aggressive ones build nuclear silos. On Hard
+you. AI nations build and upgrade mines, cities, forts and artillery, and send
+boats overseas. On Normal the more aggressive ones build nuclear silos. On Hard
 most of them do. On Easy, no AI builds a silo.
 
-## Run it on this Mac
+## Multiplayer
+
+Up to six players can share one war, on any mix of browsers, the Android
+app and the Windows app. Any slots left over go to AI nations.
+
+1. Everyone types a name under **Multiplayer** on the main menu.
+2. One person picks the map, the number of AI opponents and the difficulty,
+   then taps **Host game**. A four-letter room code appears.
+3. Everyone else types the code and taps **Join**. The host sees each player
+   arrive in the room.
+4. The host taps **Start game**. Everyone picks a country (or a spot on
+   Random maps). The war starts once everyone has chosen.
+
+How it works: a free public PeerJS server introduces the devices, so the
+host and each joiner need an internet connection when they first connect.
+After that the game traffic flows directly between devices over WebRTC, and
+on the same Wi-Fi it stays on your LAN. The host's device runs the game:
+joiners send their taps and receive the map about ten times a second.
+
+- If a joiner leaves, an AI takes over their nation. If the host leaves, the
+  game ends for everyone.
+- Multiplayer games never pause. The ❚❚ menu stays open but the war carries
+  on, and only the host can change the game speed.
+- The host should keep the game on screen. Phones suspend background apps,
+  which would freeze the game for everyone.
+- To test on one computer, open the game in two tabs with `?localnet` added
+  to the address, for example `http://localhost:8765/?localnet`. Those tabs
+  talk directly to each other with no network.
+
+## Play it
+
+### In a browser
+
+The game is live at <https://bradhunt5.github.io/pixel-war/>. It works in any
+modern browser on a phone, tablet or computer.
+
+### Android app (APK)
+
+Every version tag (for example `v1.1.0`) makes GitHub build an APK
+automatically. You can also start a build by hand: open the repository's
+**Actions** tab, choose **Build apps** and click **Run workflow**.
+
+1. On the phone, open the repository's **Releases** page and download
+   `PixelWar.apk`. For a hand-started build, download it from the build's
+   **Artifacts** instead.
+2. Open the file. Android asks you to allow installs from your browser or
+   file manager: allow it once.
+3. Tap **Install**, then open **Pixel War** from the app drawer.
+
+The APK is a debug build signed by GitHub's build machine. That's fine for
+sideloading. Publishing to the Play Store would need a release signing key.
+
+### Windows app
+
+The same build produces two Windows files:
+
+- `PixelWar-Setup.exe` installs Pixel War with a Start menu entry.
+- `PixelWar-portable.exe` runs without installing.
+
+Windows SmartScreen may warn that the app is from an unknown publisher,
+because it isn't code-signed. Click **More info → Run anyway**. **F11**
+toggles full screen.
+
+### Install from the browser instead (no download)
+
+In Chrome or Edge, open the site and choose **Install app** (on Android:
+menu → **Add to Home screen**). You get the same full-screen game, and it
+works offline.
+
+### Run it on this Mac
 
 ```bash
 cd ~/Claude/pixel-war
 python3 -m http.server 8765
 ```
 
-Then open <http://localhost:8765>. Opening `index.html` straight from Finder
-also works, but you won't get offline support.
+Then open <http://localhost:8765>. To run the desktop app instead (needs
+Node.js):
 
-## Put it on your Android phone
+```bash
+npm install
+npm run desktop
+```
 
-### Option A: play now over Wi-Fi (quickest, no install)
+### Updating
 
-1. On the Mac, run the server above. If macOS asks whether Python may accept
-   incoming connections, allow it.
-2. Make sure the phone is on the **same Wi-Fi** as the Mac.
-3. In Chrome on the phone, open `http://<mac-ip>:8765`. To find the Mac's IP
-   address, run `ipconfig getifaddr en0`. When this was written it was
-   `192.168.68.50`.
-4. Optionally, use Chrome's menu → **Add to Home screen** to get a shortcut.
-   Over plain `http://` Chrome won't install it as a full app: it opens in a
-   browser tab and needs the Mac to be running the server.
+After changing any file, bump `CACHE` in `sw.js` (for example
+`pixel-war-v6`) and push. GitHub Pages updates the website, and installed web
+apps pick up the new version the next time they are opened with a
+connection. For new APK and Windows builds, push a new version tag:
 
-### Option B: install it as a proper app (recommended)
+```bash
+git tag v1.2.0
+```
 
-Android only installs a PWA (full-screen, own icon, works offline) from an
-**HTTPS** address. The simplest free host is **GitHub Pages**:
-
-1. Create a new public repository on GitHub, for example `pixel-war`.
-2. Upload the project's contents: `index.html`, `style.css`, `game.js`,
-   `sw.js`, `manifest.webmanifest` and the `icons/` folder. You can drag them
-   into the repo's web page, or use `git push`.
-3. In the repo, open **Settings → Pages**. Set *Source* to *Deploy from a
-   branch*, choose `main` and `/ (root)`, then save.
-4. After a minute or so the game is live at
-   `https://<your-username>.github.io/pixel-war/`.
-5. On the phone, open that address in **Chrome**. Then either tap **Install
-   app** on the main menu, or use Chrome's menu → **Install app** / **Add to
-   Home screen**.
-6. Launch **Pixel War** from the home screen. It runs full-screen and keeps
-   working with no signal.
-
-Netlify Drop (<https://app.netlify.com/drop>) works the same way. Drag the
-folder in and you get an HTTPS address.
-
-### Updating an installed copy
-
-After changing any file, bump `CACHE` in `sw.js` (for example `pixel-war-v2`)
-and redeploy. The installed app picks up the new version the next time it is
-opened with a connection. You may need to close and reopen it twice.
+```bash
+git push origin v1.2.0
+```
 
 ## Files
 
@@ -124,12 +186,18 @@ opened with a connection. You may need to close and reopen it twice.
 | --- | --- |
 | `index.html` | Page layout: HUD, menus, overlays |
 | `style.css` | Mobile-first styling, including safe-area insets for notched phones |
-| `game.js` | Map generation, simulation, buildings, AI, rendering and touch input |
+| `game.js` | Map generation, simulation, buildings, AI, multiplayer, rendering and touch input |
+| `localnet.js` | Same-device stand-in for PeerJS (`?localnet`), for testing multiplayer in two tabs |
+| `vendor/peerjs.min.js` | PeerJS 1.5.4 (MIT licence), bundled so the apps don't need a CDN |
 | `maps/world.js`, `maps/europe.js` | Real-world maps: country grids made from Natural Earth data |
 | `sw.js` | Service worker that caches the game for offline play |
 | `manifest.webmanifest` | PWA metadata: name, icons, full-screen display |
 | `icons/` | App icons (192 px, 512 px and a maskable 512 px) |
 | `tools/make_icons.py` | Regenerates the icons (`python3 tools/make_icons.py`) |
+| `package.json`, `capacitor.config.json` | Android (Capacitor) and Windows (Electron) packaging |
+| `electron/main.js` | The Windows app's window |
+| `scripts/copy-web.js` | Copies the game into `www/` for packaging |
+| `.github/workflows/build-apps.yml` | Builds the APK and Windows installers on GitHub |
 | `tools/make_maps.py` | Regenerates the map files from Natural Earth's [world-atlas](https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json) TopoJSON |
 
 ## Tuning
@@ -144,9 +212,8 @@ Map data: [Natural Earth](https://www.naturalearthdata.com/) (public domain).
 
 ## Possible next steps
 
-- A real APK through Capacitor or a Trusted Web Activity (needs Node, a JDK
-  and the Android SDK).
+- A Play Store release (needs a signing key and a developer account).
 - Alliances and peace treaties with AI nations.
 - Warships to intercept enemy boats.
 - Sound effects and music.
-- Alliances, or local multiplayer on one device.
+- Fully offline LAN play (a QR-code handshake, or a native helper in the APK).

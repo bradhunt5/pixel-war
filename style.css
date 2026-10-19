@@ -217,6 +217,7 @@ body:not([data-state='play']) .sheet { display: none; }
 .build-list .bi { font-size: 24px; width: 30px; text-align: center; }
 .build-list .bt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .build-list .bt small { color: var(--muted); font-size: 12px; }
+.build-list .now { margin: 2px 2px 4px; font-size: 13px; color: var(--muted); }
 .build-list .bc { font-weight: 800; color: #facc15; font-variant-numeric: tabular-nums; }
 
 .hint {
@@ -283,6 +284,7 @@ body[data-state='play'] .banner[data-kind='mode'] { display: flex; }
   overflow-y: auto;
 }
 body[data-state='menu'] #menu,
+body[data-state='lobby'] #lobby,
 body[data-state='paused'] #pause,
 #over.show { display: flex; }
 
@@ -361,3 +363,33 @@ body[data-state='paused'] #pause,
 
 #over-title.win { color: #4ade80; }
 #over-title.lose { color: var(--danger); }
+
+/* ---------- Multiplayer ---------- */
+
+body[data-state='lobby'] .hud { display: none; }
+.mp-box { gap: 8px; }
+.text {
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  min-width: 0;
+}
+.mp-row { display: flex; gap: 6px; }
+.mp-row .secondary { height: 42px; font-size: 15px; padding: 0 12px; flex: none; }
+.code-in { flex: 1; text-transform: uppercase; letter-spacing: 0.2em; text-align: center; font-weight: 800; }
+.room { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 44px; font-weight: 900; letter-spacing: 0.25em; color: var(--text); }
+.players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.players li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); font-weight: 600; }
+.players .sw { width: 12px; height: 12px; border-radius: 3px; }
+.tag.small { font-size: 12px; }
+.primary:disabled { opacity: 0.45; }
+.mp-only { display: none; }
+body.mp .mp-only { display: block; }
+body.mp #btn-restart { display: none; }
+body.mp-client #btn-speed { visibility: hidden; }
