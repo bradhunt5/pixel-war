@@ -8,34 +8,63 @@ and offline.
 
 ## How to play
 
-1. Choose the number of opponents (2–5) and a difficulty, then press **Play**.
-2. **Tap the map** to place your capital, or press **Random spot**.
-3. Your troops grow over time. More land gives you more income and a higher
-   troop cap.
-4. Use the **Send** slider to choose what share of your troops to commit.
-5. **Tap**, or **drag your finger** from your land, onto any territory that
-   borders yours:
+1. Choose a map (**World**, **Europe** or **Random** islands), the number of
+   opponents (2–5) and a difficulty, then press **Play**.
+2. On World or Europe, **tap a country** to lead it. You start with the part
+   of it around where you tapped. On Random, tap anywhere to place your
+   capital. **Random** picks for you.
+3. Troops and gold grow over time. More land means more of both.
+4. Use the **Send** slider to choose what share of your troops to commit,
+   then **tap** the land you want to attack:
    - Grey land is unclaimed and cheap to take.
-   - Enemy land costs more the more troops that faction holds.
+   - Enemy land costs more the more troops that nation holds.
    - The attack starts nearest the spot you tapped and spreads along the
      shared border.
+   - If the target is across water, your troops **sail there by boat ⛵**.
+     They land on the nearest coast and push inland. You can have up to
+     three boats at sea at once.
+5. **Drag** to pan the map and **pinch** to zoom (use the mouse wheel on a
+   computer).
 6. Troops on the march leave your home weaker. Two attacks between the same
-   pair of factions cancel each other out.
+   pair of nations cancel each other out.
 7. Wipe out every rival to win. If you lose your last pixel, you lose.
 
-The HUD shows your troops and troop cap, your share of the land, the clock and
-a leaderboard. The ⚔ line lists your attacks in progress. The ⚠ line warns
-you about incoming attacks. **1× / 2× / 3×** changes the game speed and
-**❚❚** pauses the game. On Android the back button pauses the game instead of
-leaving it.
+### Buildings
+
+Tap **🏗️ Build**, choose a building, then tap a spot in your own land.
+Buildings cost gold, and each extra one of the same type costs a bit more.
+They must sit at least two cells apart. Captured buildings change hands.
+
+| Building | Cost | Effect |
+| --- | --- | --- |
+| 🏙️ City | 250 | +1,500 troop cap, faster troop growth, +1.5 gold/s |
+| ⛏️ Gold mine | 120 | Only on a gold deposit (the yellow dots); +4 gold/s |
+| 🛡️ Fort | 180 | Your land within 6 cells is 3× harder to capture |
+| 🎯 Artillery | 350 | Shells enemy land and buildings up to 22 cells away every few seconds. Hits kill troops and blast land back to neutral |
+| ☢️ Nuclear silo | 1,200 | Unlocks the **☢ Nuke** button |
+
+**Nukes** cost 900 gold, and each silo owner has a 30-second reload. Tap
+**☢**, then tap any target. The missile takes three seconds to arrive and
+everyone can see where it will land. It wipes out everything within 7 cells:
+troops, buildings and ownership. The land stays irradiated (green) for about
+45 seconds, and while it does it costs 4× as many troops to take.
+
+The HUD shows troops and troop cap, gold, your share of the land, the clock
+and a leaderboard. The bottom line lists your attacks and boats in progress,
+or warns you about incoming attacks. **1× / 2× / 3×** changes the game speed
+and **❚❚** pauses the game. On Android the back button cancels a build or
+nuke, and otherwise pauses the game instead of leaving it.
 
 ### The AI opponents
 
 Each rival gets a personality. Every game includes a **Warlord** (very
 aggressive), a **Balanced** rival and a **Turtle** (saves up, expands slowly).
 With four or five opponents, a **Raider** and a **Settler** join in.
-Difficulty changes how fast rivals earn troops (Easy ×0.8, Normal ×1.0,
-Hard ×1.2), how aggressive they are, and how keen they are to target you.
+Difficulty changes how fast rivals earn troops and gold (Easy ×0.8, Normal
+×1.0, Hard ×1.2), how aggressive they are, and how keen they are to target
+you. AI nations build mines, cities, forts and artillery, and send boats
+overseas. On Normal the more aggressive ones build nuclear silos. On Hard
+most of them do. On Easy, no AI builds a silo.
 
 ## Run it on this Mac
 
@@ -95,23 +124,29 @@ opened with a connection. You may need to close and reopen it twice.
 | --- | --- |
 | `index.html` | Page layout: HUD, menus, overlays |
 | `style.css` | Mobile-first styling, including safe-area insets for notched phones |
-| `game.js` | Map generation, simulation, AI, rendering and touch input |
+| `game.js` | Map generation, simulation, buildings, AI, rendering and touch input |
+| `maps/world.js`, `maps/europe.js` | Real-world maps: country grids made from Natural Earth data |
 | `sw.js` | Service worker that caches the game for offline play |
 | `manifest.webmanifest` | PWA metadata: name, icons, full-screen display |
 | `icons/` | App icons (192 px, 512 px and a maskable 512 px) |
 | `tools/make_icons.py` | Regenerates the icons (`python3 tools/make_icons.py`) |
+| `tools/make_maps.py` | Regenerates the map files from Natural Earth's [world-atlas](https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json) TopoJSON |
 
 ## Tuning
 
 The balance constants are at the top of `game.js`: `NEUTRAL_COST`, the
-attack rates and `START_TROOPS`. The difficulty table is `DIFFICULTY`, and the
+attack rates, `START_TROOPS`, `START_GOLD`, and the fort, artillery, nuke and
+boat settings. Building costs and effects are in `BUILDINGS`. The difficulty table is `DIFFICULTY`, and the
 AI personalities are `CORE_PERSONAS` and `EXTRA_PERSONAS`. Troop growth is in
 `grow()` and the AI's decisions are in `aiThink()`.
+
+Map data: [Natural Earth](https://www.naturalearthdata.com/) (public domain).
 
 ## Possible next steps
 
 - A real APK through Capacitor or a Trusted Web Activity (needs Node, a JDK
   and the Android SDK).
-- Pinch to zoom on very large maps.
+- Alliances and peace treaties with AI nations.
+- Warships to intercept enemy boats.
 - Sound effects and music.
 - Alliances, or local multiplayer on one device.

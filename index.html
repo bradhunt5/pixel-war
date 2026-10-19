@@ -22,6 +22,10 @@
       <span class="v"><span id="troops">0</span><span id="troops-max" class="sub">/ 0</span></span>
     </div>
     <div class="stat">
+      <span class="k">Gold</span>
+      <span id="gold" class="v gold">0</span>
+    </div>
+    <div class="stat">
       <span class="k">Land</span>
       <span id="land" class="v">0%</span>
     </div>
@@ -43,12 +47,24 @@
       <input id="pct" type="range" min="5" max="100" step="5" value="50">
       <span id="pct-label">50%</span>
     </div>
-    <div id="hint" class="hint">Tap or drag onto a neighbour to attack</div>
+    <div class="action-row">
+      <button id="btn-build" class="act">🏗️ Build</button>
+      <button id="btn-nuke" class="act nuke hidden">☢ 900</button>
+      <div id="hint" class="hint">Tap land to attack</div>
+    </div>
   </footer>
 
-  <div id="banner" class="banner">
-    <p><strong>Tap the map</strong> to place your capital</p>
-    <button id="btn-random" class="secondary small">Random spot</button>
+  <section id="build-sheet" class="sheet" aria-label="Build">
+    <div class="sheet-head">
+      <strong>Build</strong>
+      <button id="btn-build-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <div id="build-list" class="build-list"></div>
+  </section>
+
+  <div id="banner" class="banner" data-kind="">
+    <p id="banner-text"></p>
+    <button id="btn-banner" class="secondary small">Random</button>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -57,6 +73,15 @@
     <div class="panel">
       <h1 class="logo">PIXEL<span>WAR</span></h1>
       <p class="tag">Conquer the map, one pixel at a time.</p>
+
+      <div class="field">
+        <span class="field-label">Map</span>
+        <div class="seg" id="seg-map">
+          <button data-v="world">World</button>
+          <button data-v="europe">Europe</button>
+          <button data-v="random">Random</button>
+        </div>
+      </div>
 
       <div class="field">
         <span class="field-label">Opponents</span>
@@ -83,11 +108,12 @@
       <details class="how">
         <summary>How to play</summary>
         <ul>
-          <li>Pick a spot for your capital. Rival factions start elsewhere on the map.</li>
-          <li>Your troops grow over time. More land means more troops and a higher cap.</li>
-          <li>Set how many troops to send with the <b>Send</b> slider, then <b>tap</b> (or drag your finger onto) any land that borders yours.</li>
-          <li>Grey land is unclaimed and cheap to take. Enemy land costs more the more troops they hold.</li>
-          <li>Troops on the march leave home weaker, so don't overreach.</li>
+          <li>On World or Europe, <b>tap a country</b> to lead it. On Random, tap anywhere to place your capital.</li>
+          <li>Troops and gold grow over time. More land means more of both.</li>
+          <li>Set the <b>Send</b> slider, then <b>tap</b> land to attack. Across water, your troops sail there by boat ⛵.</li>
+          <li><b>Drag</b> to pan and <b>pinch</b> to zoom.</li>
+          <li><b>🏗️ Build</b> spends gold: 🏙️ cities raise your troop cap, ⛏️ mines on gold deposits (yellow dots) earn gold, 🛡️ forts make nearby land 3× harder to take, 🎯 artillery shells enemies in range, and ☢️ silos let you launch nukes.</li>
+          <li>Captured buildings change hands. Nuked land stays irradiated for a while.</li>
           <li>Wipe out every rival to win. Lose all your land and it's over.</li>
         </ul>
       </details>
@@ -114,6 +140,8 @@
     </div>
   </section>
 
+  <script src="maps/world.js"></script>
+  <script src="maps/europe.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
