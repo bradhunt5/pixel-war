@@ -44,8 +44,11 @@
   const NUKE_COOLDOWN = [30, 20, 12]; // seconds between launches per faction
   const BOAT_SPEED = 14;          // cells per second
   const MAX_BOATS = 3;
-  const DEPOSIT_EVERY = 300;
-  const TINY_ISLAND = 5;          // islands smaller than this many cells are removed      // land cells per gold deposit
+  const DEPOSIT_EVERY = 300;      // land cells per gold deposit
+  const TINY_ISLAND = 5;          // islands smaller than this many cells are removed
+  // Gameplay distances and rates are tuned for these map widths; finer maps
+  // scale them up so a game plays the same at any resolution.
+  const BASE_WIDTH = { world: 420, europe: 260 };
   const MIN_SPACING = 2;          // free cells required around a building
   const LAND_ROUTE_LIMIT = 6000;  // search budget when deciding land vs sea
 
@@ -158,7 +161,7 @@
     lastSend: 0,
     sentBver: -1,
   };
-  const view = { dpr: 1, mapX: 0, mapY: 0, cell: 1, minCell: 1, area: null, zoomRel: 1 };
+  const view = { dpr: 1, mapX: 0, mapY: 0, cell: 1, zoom: 1, minCell: 1, area: null, zoomRel: 1 };
   const off = document.createElement('canvas');
   const offCtx = off.getContext('2d');
   let img = null;
@@ -197,6 +200,9 @@
   }
   // Wrap an x coordinate on wrapping maps (others are bounds-checked later).
   const wx = (x) => (G.wrap ? ((x % G.gw) + G.gw) % G.gw : x);
+  // Scale a distance (sc) or an area (sc2) to this map's resolution.
+  const sc = (v) => v * G.scale;
+  const sc2 = (v) => v * G.scale * G.scale;
   const cellDist = (a, b) => Math.hypot(ddx(a, b), cy(a) - cy(b));
 
   function fmt(n) {
@@ -378,7 +384,7 @@
           }
         });
       }
-      if (island.length >= TINY_ISLAND) continue;
+      if (island.length >= sc2(TINY_ISLAND)) continue;
       for (const i of island) {
         G.countrySize[G.country[i]]--;
         G.country[i] = -1;
@@ -389,13 +395,13 @@
   }
 
   function placeDeposits() {
-    const want = Math.max(4, Math.round(G.landCells / DEPOSIT_EVERY));
+    const want = Math.max(4, Math.round(G.landCells / sc2(DEPOSIT_EVERY)));
     G.deposit = new Uint8Array(G.n);
     G.depositCells = [];
     for (let tries = 0; tries < want * 60 && G.depositCells.length < want; tries++) {
       const i = Math.floor(G.rng() * G.n);
       if (G.owner[i] === WATER) continue;
-      if (G.depositCells.some((d) => cellDist(d, i) < 6)) continue;
+      if (G.depositCells.some((d) => cellDist(d, i) < sc(6))) continue;
       G.deposit[i] = 1;
       G.depositCells.push(i);
     }
@@ -429,6 +435,7 @@
       diff: DIFFICULTY[settings.difficulty] || DIFFICULTY.normal,
       real: !!rec,
       wrap: kind === 'world' && !!rec,
+      scale: rec && BASE_WIDTH[kind] ? rec.w / BASE_WIDTH[kind] : 1,
       cosX: Float64Array.from({ length: gw }, (_, x) => Math.cos(2 * Math.PI * x / gw)),
       sinX: Float64Array.from({ length: gw }, (_, x) => Math.sin(2 * Math.PI * x / gw)),
       state: demo ? 'menu' : 'spawn',
@@ -485,7 +492,7 @@
       aggr: 0.55,
       income: 1,
       alive: true,
-      troops: START_TROOPS,
+      troops: sc2(START_TROOPS),
       gold: START_GOLD,
       built: { city: 0, mine: 0, fort: 0, artillery: 0, silo: 0 },
       cells: 0,
@@ -598,7 +605,7 @@
       if (tries % 600 === 599) d *= 0.8;
       const i = Math.floor(G.rng() * G.n);
       if (G.owner[i] !== NEUTRAL) continue;
-      if (G.countrySize[G.country[i]] < 60) continue;
+      if (G.countrySize[G.country[i]] < sc2(60)) continue;
       if (G.factions.some((f) => f.capital >= 0 && G.country[f.capital] === G.country[i])) continue;
       if (distOk(i, taken, d)) return i;
     }
@@ -613,7 +620,7 @@
       f.name = G.mp && f.player ? `${G.countryNames[c]} (${f.player})` : G.countryNames[c];
       const queue = [i];
       const seen = new Set(queue);
-      for (let q = 0; q < queue.length && f.cells < COUNTRY_START_CELLS; q++) {
+      for (let q = 0; q < queue.length && f.cells < sc2(COUNTRY_START_CELLS); q++) {
         const j = queue[q];
         if (G.owner[j] !== NEUTRAL) continue;
         setOwner(j, f.id);
@@ -715,8 +722,9 @@
     if (type !== 'mine' && G.deposit[i]) return 'Save gold deposits for mines';
     const x0 = cx(i);
     const y0 = cy(i);
-    for (let dy = -MIN_SPACING; dy <= MIN_SPACING; dy++) {
-      for (let dx = -MIN_SPACING; dx <= MIN_SPACING; dx++) {
+    const space = Math.round(sc(MIN_SPACING));
+    for (let dy = -space; dy <= space; dy++) {
+      for (let dx = -space; dx <= space; dx++) {
         const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
@@ -764,8 +772,8 @@
       const f = G.factions[b.owner];
       const l = b.level - 1;
       if (b.type === 'city') {
-        f.capBonus += CITY_CAP[l];
-        f.troopBonus += CITY_TROOPS[l];
+        f.capBonus += sc2(CITY_CAP[l]);
+        f.troopBonus += sc2(CITY_TROOPS[l]);
         f.goldBonus += CITY_GOLD[l];
       } else if (b.type === 'mine') {
         f.goldBonus += MINE_GOLD[l];
@@ -788,7 +796,7 @@
   function fortMult(i, fid) {
     let m = 1;
     for (const b of G.buildings.values()) {
-      if (b.type === 'fort' && b.owner === fid && cellDist(b.cell, i) <= FORT_RADIUS[b.level - 1]) {
+      if (b.type === 'fort' && b.owner === fid && cellDist(b.cell, i) <= sc(FORT_RADIUS[b.level - 1])) {
         m = Math.max(m, FORT_MULT[b.level - 1]);
       }
     }
@@ -800,7 +808,7 @@
   const maxTroops = (f) => 100 + f.cells * 12 + (f.capBonus || 0);
 
   function grow(f) {
-    f.gold += (1 + f.cells * 0.003 + f.goldBonus) * TICK * f.income;
+    f.gold += (1 + f.cells * 0.003 / sc2(1) + f.goldBonus) * TICK * f.income;
     const max = maxTroops(f);
     if (f.troops > max) {
       f.troops -= (f.troops - max) * 0.02;
@@ -976,10 +984,11 @@
       scored.sort((p, q) => p.d - q.d);
       // Only the stretch of border near the aim point advances, so a big
       // nation pushes where you tapped rather than all along its frontier.
-      const reach = scored[0].d + ATTACK_FOCUS;
+      const reach = scored[0].d + sc(ATTACK_FOCUS);
       let width = 0;
       while (width < scored.length && scored[width].d <= reach) width++;
-      const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE)) + 1;
+      // Finer maps take proportionally more cells per tick to keep the pace.
+      const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE) * G.scale) + 1;
       for (let j = 0; j < Math.min(cap, scored.length); j++) {
         const i = scored[j].i;
         if (G.owner[i] !== a.to) continue;
@@ -1028,7 +1037,7 @@
   function landReachable(fid, i) {
     const seen = new Set([i]);
     const queue = [i];
-    for (let q = 0; q < queue.length && q < LAND_ROUTE_LIMIT; q++) {
+    for (let q = 0; q < queue.length && q < sc2(LAND_ROUTE_LIMIT); q++) {
       const j = queue[q];
       if (G.owner[j] === fid) return true;
       let found = false;
@@ -1115,7 +1124,7 @@
 
   function advanceBoats() {
     for (const b of G.boats) {
-      b.pos += BOAT_SPEED * TICK;
+      b.pos += sc(BOAT_SPEED) * TICK;
       if (b.pos < b.path.length - 1) continue;
       b.done = true;
       const f = G.factions[b.owner];
@@ -1139,7 +1148,7 @@
     for (const t of G.buildings.values()) {
       if (t.owner === b.owner) continue;
       const d = cellDist(t.cell, b.cell);
-      if (d <= ART_RANGE[b.level - 1] && d < bestD) {
+      if (d <= sc(ART_RANGE[b.level - 1]) && d < bestD) {
         bestD = d;
         best = t.cell;
       }
@@ -1149,7 +1158,7 @@
     const y0 = cy(b.cell);
     for (let tries = 0; tries < 40; tries++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 3 + Math.random() * (ART_RANGE[b.level - 1] - 3);
+      const r = 3 + Math.random() * (sc(ART_RANGE[b.level - 1]) - 3);
       const x = wx(Math.round(x0 + Math.cos(ang) * r));
       const y = Math.round(y0 + Math.sin(ang) * r);
       if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
@@ -1170,7 +1179,7 @@
         continue;
       }
       b.reload = ART_RELOAD[b.level - 1];
-      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME, blast: ART_BLAST[b.level - 1] });
+      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME, blast: Math.round(sc(ART_BLAST[b.level - 1])) });
     }
   }
 
@@ -1224,7 +1233,7 @@
     }
     f.gold -= NUKE_COST;
     f.nextNuke = G.time + NUKE_COOLDOWN[silo.level - 1];
-    G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: NUKE_RADIUS[silo.level - 1] });
+    G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: Math.round(sc(NUKE_RADIUS[silo.level - 1])) });
     announce({ k: 'nuke', f: f.id });
     return null;
   }
@@ -1328,10 +1337,11 @@
     const x0 = cx(near);
     const y0 = cy(near);
     const options = [];
-    for (let dy = -5; dy <= 5; dy++) {
-      for (let dx = -5; dx <= 5; dx++) {
+    const far = Math.round(sc(5));
+    for (let dy = -far; dy <= far; dy++) {
+      for (let dx = -far; dx <= far; dx++) {
         const d = Math.hypot(dx, dy);
-        if (d < 2 || d > 5) continue;
+        if (d < sc(2) || d > far) continue;
         const x = wx(x0 + dx);
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
@@ -1364,7 +1374,7 @@
     const safe = candidates.filter((c) => {
       const x0 = cx(c);
       const y0 = cy(c);
-      const R = NUKE_RADIUS[Math.max(0, f.siloLevel - 1)] + 1;
+      const R = Math.round(sc(NUKE_RADIUS[Math.max(0, f.siloLevel - 1)])) + 1;
       for (let dy = -R; dy <= R; dy += 2) {
         for (let dx = -R; dx <= R; dx += 2) {
           const x = wx(x0 + dx);
@@ -1724,14 +1734,28 @@
       view.mapX = w <= a.w ? a.x + (a.w - w) / 2 : clamp(view.mapX, a.x + a.w - w, a.x);
     }
     view.mapY = h <= a.h ? a.y + (a.h - h) / 2 : clamp(view.mapY, a.y + a.h - h, a.y);
+    // Whole-pixel positions keep every cell the same size on screen.
+    view.mapX = Math.round(view.mapX);
+    view.mapY = Math.round(view.mapY);
   }
 
-  function zoomAt(px, py, newCell) {
-    newCell = clamp(newCell, view.minCell, 48 * view.dpr);
+  // Cells are drawn a whole number of device pixels wide (once they're big
+  // enough to see), otherwise some columns come out a pixel wider than
+  // others and coastlines look ragged. Fully zoomed out rounds down so the
+  // whole map still fits.
+  function snapCell(z) {
+    if (z < 2) return z;
+    return z <= view.minCell * 1.02 ? Math.floor(z) : Math.round(z);
+  }
+
+  // zoom is the continuous zoom from gestures; cell is what gets drawn.
+  function zoomAt(px, py, newZoom) {
+    view.zoom = clamp(newZoom, view.minCell, 48 * view.dpr);
+    const newCell = snapCell(view.zoom);
     view.mapX = px - (px - view.mapX) * (newCell / view.cell);
     view.mapY = py - (py - view.mapY) * (newCell / view.cell);
     view.cell = newCell;
-    view.zoomRel = newCell / view.minCell;
+    view.zoomRel = view.zoom / view.minCell;
     clampView();
   }
 
@@ -1761,7 +1785,8 @@
       (view.area.x + view.area.w / 2 - view.mapX) / view.cell,
       (view.area.y + view.area.h / 2 - view.mapY) / view.cell,
     ] : [G.gw / 2, G.gh / 2];
-    view.cell = contain * view.zoomRel;
+    view.zoom = contain * view.zoomRel;
+    view.cell = snapCell(view.zoom);
     view.mapX = view.area.x + view.area.w / 2 - centre[0] * view.cell;
     view.mapY = view.area.y + view.area.h / 2 - centre[1] * view.cell;
     clampView();
@@ -1789,7 +1814,7 @@
       gesture = { kind: 'tap', sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY };
     } else if (pointers.size === 2) {
       const p = pinchInfo();
-      gesture = { kind: 'pinch', d0: p.d, cell0: view.cell, mx: p.mx, my: p.my };
+      gesture = { kind: 'pinch', d0: p.d, zoom0: view.zoom, mx: p.mx, my: p.my };
     }
   });
 
@@ -1805,7 +1830,7 @@
       view.mapY += (info.my - gesture.my) * d;
       gesture.mx = info.mx;
       gesture.my = info.my;
-      zoomAt(info.mx * d, info.my * d, gesture.cell0 * info.d / Math.max(1, gesture.d0));
+      zoomAt(info.mx * d, info.my * d, gesture.zoom0 * info.d / Math.max(1, gesture.d0));
       return;
     }
     if (gesture.kind === 'tap' && Math.hypot(e.clientX - gesture.sx, e.clientY - gesture.sy) > 10) {
@@ -1841,7 +1866,7 @@
     if (!G || G.demo) return;
     e.preventDefault();
     const factor = Math.exp(-e.deltaY * 0.0015);
-    zoomAt(e.clientX * view.dpr, e.clientY * view.dpr, view.cell * factor);
+    zoomAt(e.clientX * view.dpr, e.clientY * view.dpr, view.zoom * factor);
   }, { passive: false });
 
   // ---------- Rendering ----------
@@ -1913,7 +1938,9 @@
     if (G.dirty) rebuildImage();
     ctx.imageSmoothingEnabled = false;
     const w = G.gw * view.cell;
-    for (const x of copies(view.mapX, w)) ctx.drawImage(off, x, view.mapY, w, G.gh * view.cell);
+    // On wrapping maps each copy overlaps the next by a pixel so no seam shows.
+    const extra = G.wrap ? 1 : 0;
+    for (const x of copies(view.mapX, w)) ctx.drawImage(off, Math.floor(x), view.mapY, w + extra, G.gh * view.cell);
   }
 
   function drawDeposits() {
@@ -1945,7 +1972,7 @@
       if (b.level > 1) drawLevel(b.level, x + size * 0.42, y - size * 0.42, size * 0.42);
       if (b.type === 'fort' && b.owner === myId && G.mode) {
         ctx.beginPath();
-        ctx.arc(x, y, FORT_RADIUS[b.level - 1] * view.cell, 0, Math.PI * 2);
+        ctx.arc(x, y, sc(FORT_RADIUS[b.level - 1]) * view.cell, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.35)';
         ctx.stroke();
       }
@@ -2068,7 +2095,7 @@
   function drawBoats() {
     const size = clamp(view.cell * 2.4, 14 * view.dpr, 26 * view.dpr);
     for (const b of G.boats) {
-      const p = Math.min(b.pos + acc * BOAT_SPEED, b.path.length - 1);
+      const p = Math.min(b.pos + acc * sc(BOAT_SPEED), b.path.length - 1);
       const a = b.path[Math.floor(p)];
       const c = b.path[Math.min(b.path.length - 1, Math.floor(p) + 1)];
       const t = p - Math.floor(p);
