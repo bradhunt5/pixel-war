@@ -50,7 +50,6 @@
   // scale them up so a game plays the same at any resolution.
   const BASE_WIDTH = { world: 420, europe: 260 };
   const MIN_SPACING = 2;          // free cells required around a building
-  const LAND_ROUTE_LIMIT = 6000;  // search budget when deciding land vs sea
 
   const NEUTRAL_RGB = [196, 190, 168];
   const WATER_RGB = [22, 58, 104];
@@ -1033,21 +1032,29 @@
     return { counts, samples, coast };
   }
 
-  // Is there a land route from cell i to fid's territory within the budget?
-  function landReachable(fid, i) {
-    const seen = new Set([i]);
-    const queue = [i];
-    for (let q = 0; q < queue.length && q < sc2(LAND_ROUTE_LIMIT); q++) {
-      const j = queue[q];
-      if (G.owner[j] === fid) return true;
-      let found = false;
-      forNeighbours(j, (k) => {
-        if (found || seen.has(k) || G.owner[k] === WATER) return;
-        if (G.owner[k] === fid) found = true;
-        seen.add(k);
-        queue.push(k);
-      });
-      if (found) return true;
+  // Should troops march to cell i, or sail? March only when the land route
+  // from fid's territory isn't much longer than the straight-line distance:
+  // otherwise tapping Morocco from Spain would walk round the Mediterranean.
+  function landRouteIsShort(fid, i) {
+    let direct = Infinity;
+    for (let j = 0; j < G.n; j++) {
+      if (G.owner[j] === fid) direct = Math.min(direct, cellDist(i, j));
+    }
+    const maxSteps = Math.ceil(direct * 1.6 + sc(8));
+    const seen = new Uint8Array(G.n);
+    seen[i] = 1;
+    let layer = [i];
+    for (let step = 0; step <= maxSteps && layer.length; step++) {
+      const next = [];
+      for (const j of layer) {
+        if (G.owner[j] === fid) return true;
+        forNeighbours(j, (k) => {
+          if (seen[k] || G.owner[k] === WATER) return;
+          seen[k] = 1;
+          next.push(k);
+        });
+      }
+      layer = next;
     }
     return false;
   }
@@ -1616,7 +1623,7 @@
     if (o === fid) return fail("That's already yours. Tap a neighbour");
     const amount = me.troops * clamp(Number(pct) || 50, 1, 100) / 100;
     if (amount < 2) return fail('Not enough troops yet');
-    if (neighbourScan(fid).counts.has(o) && landReachable(fid, i)) {
+    if (neighbourScan(fid).counts.has(o) && landRouteIsShort(fid, i)) {
       launch(fid, o, amount, cx(i), cy(i));
       return { ok: true, msg: '' };
     }
