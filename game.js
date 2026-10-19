@@ -10,6 +10,9 @@
  * silos. The last faction standing wins.
  */
 (() => {
+  // Players must run the same version to share a game (keep in step with
+  // package.json).
+  const APP_VERSION = '1.3.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -2627,6 +2630,15 @@
   function hostReceive(conn, msg) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
+      if (msg.v !== APP_VERSION) {
+        conn.send({
+          t: 'refused',
+          why: `Version mismatch: the host has v${APP_VERSION}, you have ${msg.v ? 'v' + msg.v : 'an older version'}. `
+            + 'Update Pixel War (reload the website or install the latest app) so you both match.',
+        });
+        setTimeout(() => conn.close(), 1500);
+        return;
+      }
       const started = G && !G.demo;
       if (started || net.conns.size >= FACTIONS.length - 1) {
         conn.send({ t: 'refused', why: started ? 'That game has already started' : 'That room is full' });
@@ -2635,6 +2647,12 @@
       }
       net.conns.set(conn.peer, { conn, name: cleanName(msg.name), fid: -1 });
       lobbyBroadcast();
+    } else if (msg.t === 'ready') {
+      const p = net.conns.get(conn.peer);
+      if (p) p.ready = true;
+    } else if (msg.t === 'error') {
+      const p = net.conns.get(conn.peer);
+      toast(`${p ? p.name : 'A player'} hit a problem: ${String(msg.msg).slice(0, 120)}`);
     } else if (msg.t === 'act') {
       const p = net.conns.get(conn.peer);
       if (!p || p.fid < 0) return;
@@ -2662,12 +2680,22 @@
     }
   }
 
+  // The map's ownership grid is sent in small pieces: large messages have to
+  // be split up by PeerJS, which is the step most likely to fail on a phone.
+  const OWN_PART = 1500;
+
   function startMultiplayer() {
     if (net.role !== 'host' || !net.conns.size) return;
     newGame(false, lobbyPlayers());
+    const full = snapshot(true);
+    const own = full.own;
+    full.own = null;
+    const parts = [];
+    for (let k = 0; k < own.length; k += OWN_PART) parts.push(own.slice(k, k + OWN_PART));
     let fid = 1;
     for (const p of net.conns.values()) {
       p.fid = fid++;
+      p.ready = false;
       p.conn.send({
         t: 'start',
         myId: p.fid,
@@ -2676,12 +2704,20 @@
         gw: G.gw,
         gh: G.gh,
         difficulty: settings.difficulty,
+        version: APP_VERSION,
         factions: G.factions.map((f) => ({ name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona })),
-        snap: snapshot(true),
+        parts: parts.length,
       });
+      parts.forEach((d, k) => p.conn.send({ t: 'own', k, d }));
+      p.conn.send(full);
     }
     clearTracking();
     net.sentBver = G.bver;
+    setTimeout(() => {
+      for (const p of net.conns.values()) {
+        if (p.fid >= 0 && !p.ready) toast(`${p.name} hasn't finished loading. Their connection may be struggling`);
+      }
+    }, 15000);
   }
 
   function rle(arr) {
@@ -2765,7 +2801,7 @@
       if (net.host) return;
       const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
       net.host = conn;
-      conn.on('open', () => conn.send({ t: 'hello', name: playerName() }));
+      conn.on('open', () => conn.send({ t: 'hello', name: playerName(), v: APP_VERSION }));
       conn.on('data', clientReceive);
       conn.on('close', () => {
         if (net.role === 'client') netFail('The host has left the game');
@@ -2787,9 +2823,19 @@
     } else if (msg.t === 'refused') {
       netFail(msg.why);
     } else if (msg.t === 'start') {
-      clientStart(msg);
+      if (msg.version !== APP_VERSION) {
+        netFail(`Version mismatch: the host has ${msg.version ? 'v' + msg.version : 'an older version'}, you have v${APP_VERSION}. Both players need the same version`);
+        return;
+      }
+      $('lobby-status').textContent = 'Loading the map…';
+      clientGuard('Couldn\'t start the game', () => clientStart(msg));
+    } else if (msg.t === 'own') {
+      if (G && G.loading) clientGuard('Couldn\'t load the map', () => receivePart(msg));
     } else if (msg.t === 'snap') {
-      if (G && !G.demo) applySnapshot(msg);
+      if (G && !G.demo) {
+        if (G.loading) G.pendingSnaps.push(msg);
+        else clientGuard('Lost sync with the host', () => applySnapshot(msg));
+      }
     } else if (msg.t === 'res') {
       const cb = net.pending.get(msg.seq);
       net.pending.delete(msg.seq);
@@ -2807,7 +2853,46 @@
     net.host.send({ t: 'act', seq, act });
   }
 
+  // Run fn; on failure tell the player and the host what went wrong.
+  function clientGuard(what, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error('[net]', what, e);
+      if (net.host && net.host.open) net.host.send({ t: 'error', msg: `${what}: ${e.message}` });
+      netFail(`${what}: ${e.message}`);
+    }
+  }
+
+  function receivePart(msg) {
+    G.ownParts[msg.k] = msg.d;
+    const have = G.ownParts.filter(Boolean).length;
+    $('lobby-status').textContent = `Loading the map… ${Math.round(have / G.ownParts.length * 100)}%`;
+    if (have < G.ownParts.length) return;
+    const own = [].concat(...G.ownParts);
+    let p = 0;
+    for (let k = 0; k < own.length; k += 2) {
+      for (let r = 0; r < own[k + 1]; r++, p++) assignCell(p, own[k]);
+    }
+    if (p !== G.n) throw new Error(`map size mismatch (${p} of ${G.n} cells)`);
+    G.loading = false;
+    G.ownParts = null;
+    setState('spawn');
+    view.zoomRel = 0;
+    view.cell = 0;
+    resize();
+    for (const snap of G.pendingSnaps) applySnapshot(snap);
+    G.pendingSnaps = [];
+    updateBanner();
+    updateHud(true);
+    net.host.send({ t: 'ready' });
+  }
+
   function clientStart(msg) {
+    const rec = msg.kind !== 'random' && window.PIXEL_WAR_MAPS ? window.PIXEL_WAR_MAPS[msg.kind] : null;
+    if (msg.kind !== 'random' && (!rec || rec.w !== msg.gw || rec.h !== msg.gh)) {
+      throw new Error('this copy has a different map. Update Pixel War');
+    }
     $('over').classList.remove('show');
     settings.difficulty = DIFFICULTY[msg.difficulty] ? msg.difficulty : settings.difficulty;
     myId = msg.myId;
@@ -2816,13 +2901,10 @@
     G.factions = msg.factions.map((f, id) => makeFaction(id, {
       name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona,
     }));
-    setState('spawn');
-    view.zoomRel = 0;
-    view.cell = 0;
-    resize();
-    applySnapshot(msg.snap);
-    updateBanner();
-    updateHud(true);
+    // Stay on the lobby screen until every piece of the map has arrived.
+    G.loading = true;
+    G.ownParts = new Array(msg.parts).fill(null);
+    G.pendingSnaps = [];
   }
 
   function applySnapshot(s) {
@@ -2925,6 +3007,7 @@
   $('btn-start').addEventListener('click', startMultiplayer);
   $('btn-leave').addEventListener('click', toMenu);
   $('mp-name').value = store.get('name', '');
+  $('version').textContent = `v${APP_VERSION}`;
 
   // Exposed for debugging and automated play-testing.
   window.pixelWar = {

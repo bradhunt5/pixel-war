@@ -1,7 +1,7 @@
 'use strict';
 
 // Bump the version whenever a cached file changes so phones pick it up.
-const CACHE = 'pixel-war-v8';
+const CACHE = 'pixel-war-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -29,20 +29,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Serve from the cache (works offline) and refresh it in the background.
+// Network first, so players always get the latest version when online
+// (mixed versions can't play together); the cache is the offline fallback.
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: true });
-      const network = fetch(req)
-        .then((res) => {
-          if (res.ok) cache.put(req, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
+      try {
+        const res = await fetch(req, { cache: 'no-cache' });
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      } catch (e) {
+        const cached = await cache.match(req, { ignoreSearch: true });
+        if (cached) return cached;
+        throw e;
+      }
     }),
   );
 });
