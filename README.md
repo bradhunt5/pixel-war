@@ -8,7 +8,11 @@ Windows app, and up to six players can play together on any mix of devices.
 ## How to play
 
 1. Choose a map (**World**, **Europe** or **Random** islands), the number of
-   AI opponents (1–5), your colour and a difficulty, then press **Play**.
+   AI opponents (1–5), any **AI allies** (0–3), your colour and a
+   difficulty, then press **Play**. Allies are on your team: they never
+   attack you, and your team wins together. Opponents fight each other as
+   well as you. The game holds six nations, so opponents are trimmed if
+   allies plus opponents won't fit.
 2. On World or Europe, **tap a country** to lead it. You start with the part
    of it around where you tapped. On Random, tap anywhere to place your
    capital. **Random** picks for you.

@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.5.1';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -159,7 +159,7 @@
     },
   };
 
-  const settings = Object.assign({ opponents: 3, difficulty: 'normal', pct: 50, map: 'world', colour: 0 },
+  const settings = Object.assign({ opponents: 3, allies: 0, difficulty: 'normal', pct: 50, map: 'world', colour: 0 },
     store.get('settings', {}));
   if (!(settings.opponents >= 1)) settings.opponents = 1;
   const record = Object.assign({ wins: 0, losses: 0, fastest: null }, store.get('record', {}));
@@ -552,7 +552,19 @@
     closeBuildSheet();
     acc = 0;
     setState(demo ? 'menu' : 'spawn');
-    humans = demo ? [] : humans || [{ name: 'You', colour: settings.colour }];
+    if (!demo && !humans) {
+      // Single player: you, plus any AI allies on your team, against the
+      // opponents (who also fight each other). Six nations at most.
+      const allies = clamp(settings.allies || 0, 0, MAX_FACTIONS - 2);
+      const opponents = clamp(settings.opponents, 1, MAX_FACTIONS - 1 - allies);
+      humans = [{ name: 'You', colour: settings.colour }];
+      aiCount = allies + opponents;
+      teams = allies ? [1].concat(new Array(allies).fill(1), new Array(opponents).fill(0)) : undefined;
+      if (opponents < settings.opponents) {
+        setTimeout(() => toast(`Six nations max: playing ${allies} all${allies === 1 ? 'y' : 'ies'} against ${opponents} opponent${opponents === 1 ? '' : 's'}`), 400);
+      }
+    }
+    humans = demo ? [] : humans;
     const kind = demo ? 'random' : settings.map;
     const rec = kind !== 'random' && window.PIXEL_WAR_MAPS ? window.PIXEL_WAR_MAPS[kind] : null;
     let gw;
@@ -881,6 +893,11 @@
   }
 
   function addAttack(from, to, troops, aimX, aimY) {
+    // Never fight a friend: return the troops instead.
+    if (allied(from, to)) {
+      G.factions[from].troops += troops;
+      return;
+    }
     const existing = G.attacks.find((a) => a.from === from && a.to === to && !a.done);
     if (existing) {
       existing.troops += troops;
@@ -1191,7 +1208,8 @@
       b.done = true;
       const f = G.factions[b.owner];
       const o = G.owner[b.landing];
-      if (o === b.owner) {
+      // An ally took the beach while we sailed: the troops go home.
+      if (allied(o, b.owner)) {
         f.troops += b.troops;
         continue;
       }
@@ -2596,7 +2614,8 @@
 
   function syncMenu() {
     const segs = {
-      'seg-opp': String(settings.opponents), 'seg-diff': settings.difficulty, 'seg-map': settings.map,
+      'seg-opp': String(settings.opponents), 'seg-allies': String(settings.allies || 0),
+      'seg-diff': settings.difficulty, 'seg-map': settings.map,
       'colour-pick': String(settings.colour),
     };
     for (const [id, value] of Object.entries(segs)) {
@@ -2623,6 +2642,7 @@
     });
   }
   bindSeg('seg-opp', 'opponents', Number);
+  bindSeg('seg-allies', 'allies', Number);
   $('colour-pick').innerHTML = COLOURS.map((c, k) =>
     `<button data-v="${k}" style="background:${colourCss(k)}" aria-label="${c.name}" title="${c.name}"></button>`).join('');
   bindSeg('colour-pick', 'colour', Number);
