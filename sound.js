@@ -47,6 +47,26 @@
   }
   for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, unlock, { capture: true });
 
+  // Go silent (music and effects) while the app is in the background, the
+  // screen is locked or the window is minimised, and pick up again on return.
+  let pausedByHide = false;
+  function onHide() {
+    if (!ctx || ctx.state !== 'running') return;
+    pausedByHide = true;
+    ctx.suspend();
+  }
+  function onShow() {
+    if (!ctx || !pausedByHide || document.hidden) return;
+    pausedByHide = false;
+    ctx.resume();
+  }
+  document.addEventListener('visibilitychange', () => (document.hidden ? onHide() : onShow()));
+  window.addEventListener('pagehide', onHide);
+  window.addEventListener('pageshow', onShow);
+  // Android app (Capacitor) lifecycle events, where the platform sends them.
+  document.addEventListener('pause', onHide);
+  document.addEventListener('resume', onShow);
+
   // A pitched note: oscillator shape, start/end frequency, length, volume,
   // optional delay and output node (defaults to the master bus).
   function tone(type, f0, f1, dur, vol, delay = 0, out = bus) {

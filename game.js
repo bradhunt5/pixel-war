@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.0';
+  const APP_VERSION = '1.9.1';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -55,7 +55,7 @@
   // SAM sites shoot down enemy nukes passing within range.
   const SAM_RANGE = [16, 22, 28];
   const SAM_RELOAD = [20, 14, 9];
-  const INTERCEPT_TIME = 0.8;     // seconds for a SAM's interceptor to reach its target
+  const INTERCEPT_SPEED = 70;     // cells per second for a SAM's interceptor
   // Airfields drop paratroopers on land within range.
   const AIR_RANGE = [80, 120, 170];
   const AIR_RELOAD = [25, 18, 12];
@@ -234,6 +234,11 @@
     pending: new Map(),
     lastSend: 0,
     sentBver: -1,
+    seats: new Map(),             // host: rejoin token -> { fid, name, colour }
+    token: '',                    // client: our rejoin token for this game
+    reconnectUntil: 0,            // client: reconnecting until this time (ms)
+    rejoinAttempt: 0,
+    peerOptions: null,
   };
   const view = { dpr: 1, mapX: 0, mapY: 0, cell: 1, zoom: 1, minCell: 1, area: null, zoomRel: 1 };
   const off = document.createElement('canvas');
@@ -1590,14 +1595,33 @@
       b.readyAt = G.time + SAM_RELOAD[b.level - 1];
       G.bver++;
       target.inbound = (target.inbound || 0) + 1;
-      // Always arrive at least a tick before the target lands.
-      const dur = Math.max(TICK, Math.min(INTERCEPT_TIME, left - TICK));
-      const hit = flightPoint(target, (target.t + dur) / target.dur, lift);
+      const { dur, hit } = interceptCourse(b.cell, target, lift);
       addFx(b.cell, 1.5, '210,240,255', 350);
       G.interceptors.push({
         owner: b.owner, from: b.cell, hx: hit.x, hy: hit.y, t: 0, dur, target, kind,
       });
     }
+  }
+
+  // The earliest point where an interceptor fired from `cell` can meet the
+  // target, in whole ticks, always before the target lands. Fast planes
+  // are met out towards the edge of the SAM's range rather than overhead.
+  function interceptCourse(cell, target, lift) {
+    const x0 = cx(cell) + 0.5;
+    const y0 = cy(cell) + 0.5;
+    const speed = sc(INTERCEPT_SPEED);
+    const last = Math.max(1, Math.floor((target.dur - target.t) / TICK + 1e-6) - 1);
+    let hit = null;
+    let n = 1;
+    for (; n <= last; n++) {
+      hit = flightPoint(target, (target.t + n * TICK) / target.dur, lift);
+      let dx = hit.x - x0;
+      if (G.wrap) dx -= Math.round(dx / G.gw) * G.gw;
+      if (Math.hypot(dx, hit.y - y0) <= speed * n * TICK) break;
+    }
+    n = Math.min(n, last);
+    if (!hit || n === last) hit = flightPoint(target, (target.t + n * TICK) / target.dur, lift);
+    return { dur: n * TICK, hit };
   }
 
   // A missile's or plane's drawn position (in cells, including its arc) at
@@ -3787,8 +3811,11 @@
 
   // ---------- Main loop ----------
 
-  function frame(now) {
-    const dt = Math.min(0.25, (now - last) / 1000);
+  // Advance the simulation (single player and host) and send the host's
+  // updates. Normally run every frame; see backgroundBeat for when hidden.
+  function step(now) {
+    // In the background, steps can come a second or more apart.
+    const dt = Math.max(0, Math.min(document.hidden ? 2 : 0.25, (now - last) / 1000));
     last = now;
     if (G && net.role !== 'client' && ((G.demo && G.state === 'menu') || G.state === 'play')) {
       acc += dt * (G.demo ? 1.5 : speed);
@@ -3800,14 +3827,46 @@
         if (!G || G.state === 'over') break;
       }
     }
-    updateMusic(now);
     if (net.role === 'host' && now - net.lastSend > 100) {
       net.lastSend = now;
       netBroadcast();
     }
+  }
+
+  function frame(now) {
+    step(now);
+    updateMusic(now);
     render(now);
     updateHud(false);
     requestAnimationFrame(frame);
+  }
+
+  // The screen stops refreshing while the app is in the background (and
+  // sometimes when it is merely covered, without the page being told),
+  // which would freeze a multiplayer game for everyone if the host switched
+  // away. During multiplayer a worker's timer (not slowed down like the
+  // page's own timers) steps the game whenever frames have stalled.
+  let beat = null;
+  function backgroundBeat() {
+    if (net.role && performance.now() - last > 150) step(performance.now());
+  }
+  function startBeat() {
+    if (beat) return;
+    try {
+      const src = 'setInterval(() => postMessage(0), 100);';
+      const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      worker.onmessage = backgroundBeat;
+      beat = () => worker.terminate();
+    } catch (e) {
+      const id = setInterval(backgroundBeat, 100);
+      beat = () => clearInterval(id);
+    }
+  }
+  function stopBeat() {
+    if (beat) {
+      beat();
+      beat = null;
+    }
   }
 
   // ---------- Menus and controls ----------
@@ -4301,6 +4360,7 @@
     }
     netLeave();
     net.role = 'host';
+    startBeat();
     net.hostColour = settings.colour;
     net.aiOn = new Array(MAX_FACTIONS).fill(true);
     net.teams = new Array(MAX_FACTIONS).fill(0);
@@ -4371,6 +4431,8 @@
       const colour = resolveColours(wanted).pop();
       net.conns.set(conn.peer, { conn, name: cleanName(msg.name), colour, fid: -1 });
       lobbyBroadcast();
+    } else if (msg.t === 'rejoin') {
+      hostRejoin(conn, msg);
     } else if (msg.t === 'loaded') {
       const p = net.conns.get(conn.peer);
       if (p) p.loaded = true;
@@ -4392,9 +4454,42 @@
     }
   }
 
+  // A player whose connection dropped mid-game (e.g. their phone suspended
+  // the app) comes back to their own nation, which an AI ran meanwhile.
+  function hostRejoin(conn, msg) {
+    const seat = net.seats.get(msg.token);
+    const f = seat && G && !G.demo && G.state !== 'over' ? G.factions[seat.fid] : null;
+    if (!f || !f.alive || msg.v !== APP_VERSION) {
+      conn.send({ t: 'refused', why: f && !f.alive ? 'Your nation fell while you were away' : 'Couldn\'t rejoin that game' });
+      setTimeout(() => conn.close(), 500);
+      return;
+    }
+    // Forget the old link for this seat, if the host hasn't noticed it drop.
+    // (Hang up on it only if it came from elsewhere: from the same device,
+    // closing it could take the new link down with it.)
+    for (const [id, old] of net.conns) {
+      if (old.fid !== seat.fid) continue;
+      net.conns.delete(id);
+      if (old.conn !== conn && old.conn.peer !== conn.peer) {
+        try {
+          old.conn.close();
+        } catch (e) {
+          // Already closed.
+        }
+      }
+    }
+    const back = !f.isPlayer;
+    f.isPlayer = true;
+    const p = { conn, name: seat.name, colour: seat.colour, fid: seat.fid, token: msg.token };
+    net.conns.set(conn.peer, p);
+    sendGame(p, true);
+    if (back) announce({ k: 'msg', text: `${seat.name} is back in control of ${f.name}` });
+  }
+
   function hostDrop(conn) {
     const p = net.conns.get(conn.peer);
-    if (!p) return;
+    // Ignore an old link closing after its player has already rejoined.
+    if (!p || p.conn !== conn) return;
     net.conns.delete(conn.peer);
     if (p.fid >= 0 && G && !G.demo) {
       // An AI takes over the departed player's nation.
@@ -4405,7 +4500,7 @@
       f.nextThink = G.time + 1;
       if (G.state === 'spawn' && f.capital < 0) actSpawn(f.id, -1);
       if (G.state === 'spawn' && G.factions.every((o) => !o.isPlayer || o.capital >= 0)) setState('play');
-      announce({ k: 'msg', text: `${p.name} left. An AI takes over ${f.name}` });
+      announce({ k: 'msg', text: `${p.name} lost connection. An AI runs ${f.name} until they're back` });
     } else {
       lobbyBroadcast();
     }
@@ -4414,6 +4509,40 @@
   // The map's ownership grid is sent in small pieces: large messages have to
   // be split up by PeerJS, which is the step most likely to fail on a phone.
   const OWN_PART = 1500;
+
+  // Send a player the whole game as it stands: at the start, or when they
+  // rejoin after losing their connection.
+  function sendGame(p, rejoin) {
+    const full = snapshot(true);
+    const own = full.own;
+    full.own = null;
+    if (rejoin) {
+      // Everyone else gets these in the next update; don't play them twice.
+      full.fx = [];
+      full.ev = [];
+    }
+    const parts = [];
+    for (let k = 0; k < own.length; k += OWN_PART) parts.push(own.slice(k, k + OWN_PART));
+    p.loaded = false;
+    p.conn.send({
+      t: 'start',
+      myId: p.fid,
+      token: p.token,
+      rejoin,
+      kind: G.kind,
+      seed: G.seed,
+      gw: G.gw,
+      gh: G.gh,
+      difficulty: settings.difficulty,
+      version: APP_VERSION,
+      factions: G.factions.map((f) => ({
+        name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: f.colour, team: f.team,
+      })),
+      parts: parts.length,
+    });
+    parts.forEach((d, k) => p.conn.send({ t: 'own', k, d }));
+    p.conn.send(full);
+  }
 
   function startMultiplayer() {
     if (net.role !== 'host' || !net.conns.size) return;
@@ -4429,31 +4558,13 @@
     unready.forEach((away, k) => {
       if (away) actSpawn(k + 1, -1);
     });
-    const full = snapshot(true);
-    const own = full.own;
-    full.own = null;
-    const parts = [];
-    for (let k = 0; k < own.length; k += OWN_PART) parts.push(own.slice(k, k + OWN_PART));
+    net.seats.clear();
     let fid = 1;
     for (const p of net.conns.values()) {
       p.fid = fid++;
-      p.loaded = false;
-      p.conn.send({
-        t: 'start',
-        myId: p.fid,
-        kind: G.kind,
-        seed: G.seed,
-        gw: G.gw,
-        gh: G.gh,
-        difficulty: settings.difficulty,
-        version: APP_VERSION,
-        factions: G.factions.map((f) => ({
-          name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: f.colour, team: f.team,
-        })),
-        parts: parts.length,
-      });
-      parts.forEach((d, k) => p.conn.send({ t: 'own', k, d }));
-      p.conn.send(full);
+      p.token = Array.from(crypto.getRandomValues(new Uint8Array(12)), (x) => x.toString(16).padStart(2, '0')).join('');
+      net.seats.set(p.token, { fid: p.fid, name: p.name, colour: p.colour });
+      sendGame(p, false);
     }
     clearTracking();
     net.sentBver = G.bver;
@@ -4544,32 +4655,111 @@
     document.body.classList.add('mp-connecting');
     const options = await peerOptions();
     if (net.role !== 'client') return; // Left while we were waiting.
+    net.peerOptions = options;
     const peer = new window.Peer(options);
     net.peer = peer;
     keepAlive(peer);
     peer.on('open', () => {
-      if (net.host) return;
+      // Also fires when the matchmaking server comes back mid-game.
+      if (net.host || net.token) return;
       const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
       net.host = conn;
       conn.on('open', () => conn.send({ t: 'hello', name: playerName(), colour: settings.colour, v: APP_VERSION }));
-      conn.on('data', clientReceive);
-      conn.on('close', () => {
-        if (net.role === 'client') netFail(net.connected ? 'The host has left the game' : CONNECT_FAIL);
-      });
-      conn.on('error', (e) => {
-        console.warn('[net] connection error:', e && e.type, e && e.message);
-        if (net.role === 'client' && !net.connected) netFail(CONNECT_FAIL);
-      });
+      wireHost(conn);
       setTimeout(() => {
         if (net.host === conn && !net.connected) netFail(CONNECT_FAIL);
       }, CONNECT_TIMEOUT);
     });
+    peerErrors(peer);
+  }
+
+  function peerErrors(peer) {
     peer.on('error', (e) => {
       console.warn('[net] client error:', e.type, e.message);
-      if (net.peer !== peer) return;
-      if (e.type === 'peer-unavailable') netFail(`No game found with code ${code}`);
+      // While rejoining, failed attempts are simply retried.
+      if (net.peer !== peer || net.reconnectUntil) return;
+      if (e.type === 'peer-unavailable') netFail(`No game found with code ${net.code}`);
       else if (!net.host || !net.host.open) netFail('Could not connect. Check your internet connection');
     });
+  }
+
+  function wireHost(conn) {
+    conn.on('data', (msg) => {
+      if (net.host === conn) clientReceive(msg);
+    });
+    conn.on('close', () => hostLost(conn));
+    conn.on('error', (e) => {
+      console.warn('[net] connection error:', e && e.type, e && e.message);
+      hostLost(conn);
+    });
+  }
+
+  // How long a joiner keeps trying to get back into a game after losing
+  // the connection to the host.
+  const REJOIN_WINDOW = 90000;
+
+  function hostLost(conn) {
+    if (net.role !== 'client' || net.host !== conn) return;
+    const inGame = net.token && G && !G.demo && G.state !== 'over';
+    if (!inGame) {
+      if (!net.connected || conn.open === false) netFail(net.connected ? 'The host has left the game' : CONNECT_FAIL);
+      return;
+    }
+    net.host = null;
+    if (!net.reconnectUntil) {
+      net.reconnectUntil = Date.now() + REJOIN_WINDOW;
+      toast('Lost the connection to the host. Reconnecting…');
+    }
+    setTimeout(attemptRejoin, 1000);
+  }
+
+  function attemptRejoin() {
+    if (net.role !== 'client' || !net.reconnectUntil || net.host) return;
+    if (Date.now() > net.reconnectUntil) {
+      net.reconnectUntil = 0;
+      netFail('Lost the connection to the host');
+      return;
+    }
+    const attempt = ++net.rejoinAttempt;
+    // Give up on this attempt and try again if nothing has happened.
+    setTimeout(() => {
+      if (net.rejoinAttempt !== attempt || !net.reconnectUntil) return;
+      if (net.host) {
+        try {
+          net.host.close();
+        } catch (e) {
+          // Already closed.
+        }
+        net.host = null;
+      }
+      attemptRejoin();
+    }, 8000);
+    let peer = net.peer;
+    if (!peer || peer.destroyed) {
+      peer = new window.Peer(net.peerOptions || {});
+      net.peer = peer;
+      keepAlive(peer);
+      peerErrors(peer);
+    }
+    const go = () => {
+      if (net.rejoinAttempt !== attempt || net.role !== 'client') return;
+      const conn = peer.connect(PEER_PREFIX + net.code, { reliable: true });
+      net.host = conn;
+      conn.on('open', () => conn.send({ t: 'rejoin', token: net.token, v: APP_VERSION }));
+      wireHost(conn);
+    };
+    if (peer.open) {
+      go();
+    } else {
+      peer.once('open', go);
+      if (peer.disconnected && !peer.destroyed) {
+        try {
+          peer.reconnect();
+        } catch (e) {
+          // Retried on the next attempt.
+        }
+      }
+    }
   }
 
   function clientReceive(msg) {
@@ -4580,11 +4770,20 @@
       net.code = msg.code;
       renderLobby(msg.players, msg.you, msg.countdown, msg.force, msg.aiOn || [], msg.info, msg.teams);
     } else if (msg.t === 'refused') {
+      net.reconnectUntil = 0;
       netFail(msg.why);
+    } else if (msg.t === 'bye') {
+      net.reconnectUntil = 0;
+      netFail('The host has left the game');
     } else if (msg.t === 'start') {
       if (msg.version !== APP_VERSION) {
         netFail(`Version mismatch: the host has ${msg.version ? 'v' + msg.version : 'an older version'}, you have v${APP_VERSION}. Both players need the same version`);
         return;
+      }
+      net.token = msg.token || '';
+      if (msg.rejoin) {
+        net.reconnectUntil = 0;
+        toast('Reconnected');
       }
       $('lobby-status').textContent = 'Loading the map…';
       clientGuard('Couldn\'t start the game', () => clientStart(msg));
@@ -4637,8 +4836,10 @@
     G.loading = false;
     G.ownParts = null;
     setState('spawn');
-    view.zoomRel = 0;
-    view.cell = 0;
+    if (!G.keepView) {
+      view.zoomRel = 0;
+      view.cell = 0;
+    }
     resize();
     for (const snap of G.pendingSnaps) applySnapshot(snap);
     G.pendingSnaps = [];
@@ -4661,7 +4862,9 @@
       name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: COLOURS[f.colour] ? f.colour : 0,
       team: f.team || 0,
     }));
-    // Stay on the lobby screen until every piece of the map has arrived.
+    // Stay on the lobby screen until every piece of the map has arrived
+    // (or, when rejoining, keep showing the game as it was).
+    G.keepView = !!msg.rejoin && view.cell > 0;
     G.loading = true;
     G.ownParts = new Array(msg.parts).fill(null);
     G.pendingSnaps = [];
@@ -4744,17 +4947,45 @@
   function netLeave() {
     const role = net.role;
     net.role = null;
+    stopBeat();
     try {
       if (net.host) net.host.close();
-      for (const p of net.conns.values()) p.conn.close();
-      if (net.peer) net.peer.destroy();
     } catch (e) {
       // Already closed.
     }
+    // The host tells everyone it is leaving (so they don't wait to
+    // reconnect), giving the message a moment to arrive before hanging up.
+    const conns = [...net.conns.values()].map((p) => p.conn);
+    const peer = net.peer;
+    let said = false;
+    for (const c of conns) {
+      try {
+        if (c.open) {
+          c.send({ t: 'bye' });
+          said = true;
+        }
+      } catch (e) {
+        // Already closed.
+      }
+    }
+    const hangUp = () => {
+      try {
+        for (const c of conns) c.close();
+        if (peer) peer.destroy();
+      } catch (e) {
+        // Already closed.
+      }
+    };
+    if (said) setTimeout(hangUp, 400);
+    else hangUp();
     net.peer = null;
     net.host = null;
     net.conns.clear();
     net.pending.clear();
+    net.seats.clear();
+    net.token = '';
+    net.reconnectUntil = 0;
+    net.rejoinAttempt++;
     net.code = '';
     net.opened = false;
     net.forceAllowed = false;

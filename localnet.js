@@ -19,8 +19,16 @@
       (this.handlers[ev] = this.handlers[ev] || []).push(fn);
     }
 
+    once(ev, fn) {
+      const wrap = (...args) => {
+        this.handlers[ev] = (this.handlers[ev] || []).filter((h) => h !== wrap);
+        fn(...args);
+      };
+      this.on(ev, wrap);
+    }
+
     emit(ev, ...args) {
-      for (const fn of this.handlers[ev] || []) fn(...args);
+      for (const fn of [...(this.handlers[ev] || [])]) fn(...args);
     }
   }
 

@@ -121,7 +121,8 @@ you go to war, drums when you're under fire, and a lead melody when it's
 all-out battle or a nuke is in the air. It ducks under nuclear blasts and
 stops at the end of a game. Tap 🔊 at the top of the screen to cycle
 **music and sound → sound effects only (🔉) → silent (🔇)**. The setting is
-remembered.
+remembered. All sound goes quiet while the app is in the background or the
+screen is locked, and comes back when you return.
 
 The HUD shows troops and troop cap, gold, your share of the land, the clock
 and a leaderboard showing each nation's share of the land and its troops (the
@@ -179,10 +180,14 @@ joiners send their taps and receive the map about ten times a second.
 
 - If a joiner leaves, an AI takes over their nation. If the host leaves, the
   game ends for everyone.
+- If a joiner's connection drops (for example their phone suspends the app
+  in the background), the game reconnects them automatically for up to 90
+  seconds and hands their nation back. An AI runs it meanwhile.
 - Multiplayer games never pause. The ❚❚ menu stays open but the war carries
   on, and only the host can change the game speed.
-- The host should keep the game on screen. Phones suspend background apps,
-  which would freeze the game for everyone.
+- The host's game keeps running when it is switched to the background, so
+  everyone else can carry on. A phone may still suspend an app that stays in
+  the background for long, so the host is best keeping the game on screen.
 - To test on one computer, open the game in two tabs with `?localnet` added
   to the address, for example `http://localhost:8765/?localnet`. Those tabs
   talk directly to each other with no network.
