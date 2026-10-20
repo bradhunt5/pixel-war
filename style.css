@@ -417,3 +417,6 @@ body.mp-client #btn-speed { visibility: hidden; }
 .players li.tog:active { background: rgba(255, 255, 255, 0.12); }
 .players .sw.empty { background: transparent; border: 1px dashed var(--muted); }
 .players .ps.on { color: var(--accent-hi); }
+
+body.mp-connecting #btn-ready,
+body.mp-connecting .lobby-colour-field { display: none; }

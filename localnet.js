@@ -49,6 +49,8 @@
   class LocalPeer extends Emitter {
     constructor(id) {
       super();
+      // Like PeerJS, the first argument may be an options object instead.
+      if (typeof id !== 'string') id = null;
       this.id = id || 'local-' + Math.random().toString(36).slice(2);
       this.open = false;
       this.destroyed = false;

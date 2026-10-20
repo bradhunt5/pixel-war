@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.4.2';
+  const APP_VERSION = '1.4.3';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -2675,6 +2675,18 @@
   // clients only render and send their taps as actions.
 
   const PEER_PREFIX = 'pixelwar-v1-';
+  // STUN servers help devices behind home routers find a direct route.
+  const PEER_OPTIONS = {
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+      ],
+    },
+  };
+  const CONNECT_TIMEOUT = 15000;
+  const CONNECT_FAIL = 'Couldn\'t connect to the host. A network between you is blocking direct connections '
+    + '(common on mobile data and work or school Wi-Fi). Try both devices on the same Wi-Fi.';
   const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
   function playerName() {
@@ -2872,7 +2884,7 @@
     net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
     document.body.classList.add('mp');
     showLobby('Creating a room…');
-    const peer = new window.Peer(PEER_PREFIX + net.code);
+    const peer = new window.Peer(PEER_PREFIX + net.code, PEER_OPTIONS);
     net.peer = peer;
     peer.on('open', () => {
       if (net.opened) return;
@@ -2885,6 +2897,13 @@
       conn.on('data', (msg) => hostReceive(conn, msg));
       conn.on('close', () => hostDrop(conn));
       conn.on('error', () => hostDrop(conn));
+      // The matchmaker found us, but the direct link may still fail.
+      if (G && G.demo) toast('Someone is joining…');
+      setTimeout(() => {
+        if (!conn.open && net.role === 'host') {
+          toast('A player couldn\'t connect: a network blocked the direct link. Try the same Wi-Fi');
+        }
+      }, CONNECT_TIMEOUT);
     });
     peer.on('error', (e) => {
       console.warn('[net] host error:', e.type, e.message);
@@ -3089,9 +3108,11 @@
     net.role = 'client';
     net.code = code;
     document.body.classList.add('mp', 'mp-client');
-    showLobby('Connecting…');
+    showLobby('Connecting to the host…');
     $('lobby-players').innerHTML = '';
-    const peer = new window.Peer();
+    // Until the host answers there is nothing to pick or ready up for.
+    document.body.classList.add('mp-connecting');
+    const peer = new window.Peer(PEER_OPTIONS);
     net.peer = peer;
     keepAlive(peer);
     peer.on('open', () => {
@@ -3101,8 +3122,15 @@
       conn.on('open', () => conn.send({ t: 'hello', name: playerName(), colour: settings.colour, v: APP_VERSION }));
       conn.on('data', clientReceive);
       conn.on('close', () => {
-        if (net.role === 'client') netFail('The host has left the game');
+        if (net.role === 'client') netFail(net.connected ? 'The host has left the game' : CONNECT_FAIL);
       });
+      conn.on('error', (e) => {
+        console.warn('[net] connection error:', e && e.type, e && e.message);
+        if (net.role === 'client' && !net.connected) netFail(CONNECT_FAIL);
+      });
+      setTimeout(() => {
+        if (net.host === conn && !net.connected) netFail(CONNECT_FAIL);
+      }, CONNECT_TIMEOUT);
     });
     peer.on('error', (e) => {
       console.warn('[net] client error:', e.type, e.message);
@@ -3115,6 +3143,8 @@
   function clientReceive(msg) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'lobby') {
+      net.connected = true;
+      document.body.classList.remove('mp-connecting');
       net.code = msg.code;
       renderLobby(msg.players, msg.you, msg.countdown, msg.force, msg.aiOn || [], msg.info);
     } else if (msg.t === 'refused') {
@@ -3280,6 +3310,8 @@
     net.code = '';
     net.opened = false;
     net.forceAllowed = false;
+    net.connected = false;
+    document.body.classList.remove('mp-connecting');
     stopCountdown();
     myId = 0;
     document.body.classList.remove('mp', 'mp-client');
