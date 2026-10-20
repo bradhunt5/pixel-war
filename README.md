@@ -47,7 +47,11 @@ They must sit at least two cells apart. Captured buildings change hands.
 | ⛏️ Gold mine | 120 | +4 gold/s | +7 gold/s | +11 gold/s |
 | 🛡️ Fort | 180 | Land within 8 cells 4× harder to take | 11 cells, 6× | 14 cells, 8× |
 | 🎯 Artillery | 350 | Range 22, fires every 3.5 s | Range 28, every 2.4 s | Range 34, every 1.5 s, bigger blast |
-| ☢️ Nuclear silo | 1,200 | Nuke blast radius 7, 30 s reload | Radius 10, 20 s reload | Radius 13, 12 s reload |
+| ⚔️ Barracks | 300 | Your attacks cost 15% fewer troops | 25% | 35% |
+| 📡 SAM site | 600 | Shoots down enemy nukes within 16 cells, every 20 s | 22 cells, 14 s | 28 cells, 9 s |
+| 🚢 Shipyard | 450 | On the coast only; up to 2 warships | Up to 4 | Up to 6 (8 per nation in total) |
+| ✈️ Airfield | 500 | Paradrops up to 80 cells away, every 25 s | 120 cells, 18 s | 170 cells, 12 s |
+| ☢️ Nuclear silo | 1,200 | Nuke blast radius 7, 30 s reload | Radius 10, 20 s reload | Radius 13, 12 s reload; unlocks the Tsar Bomba |
 
 Gold mines only go on gold deposits (the yellow dots). Defenders inside a
 fort's range also lose only half as many troops when land there falls, and
@@ -58,6 +62,43 @@ next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
 base price and level 3 costs 2.4×. A small badge on the map shows a
 building's level. Each upgrade also lets the building take one more
 artillery hit.
+
+**Power-ups**
+- **☢☢ Tsar Bomba:** with a level 3 silo, a **☢☢** button appears. It costs
+  4,000 gold and has a 2-minute reload. The super-nuke flies for 5 seconds,
+  blasts about twice the radius of a top nuke and leaves 90 seconds of
+  fallout. A SAM needs **two** hits to stop it.
+- **📡 SAM sites** shoot down enemy nukes (the Tsar Bomba takes two hits),
+  bombers and paratrooper planes that pass within range, one per reload.
+  Each shot is a visible interceptor missile that flies up to meet its
+  target and blows it up in mid-air. They protect allies too.
+- **✈ Air operations:** with an airfield (or a carrier), tap **✈ Air** and
+  choose:
+  - **🪂 Paradrop:** your Send % of troops fly to any non-allied land in
+    range, land and push inland.
+  - **💣 Air strike (300g):** a bomber carpet-bombs the area with 6 bombs,
+    killing troops, wrecking buildings and knocking out land.
+  Dashed circles show each airfield's reach. Both share the base's reload. Your Send % of troops fly there, land and push inland.
+- **⚔️ Barracks:** the best one you own makes every attack (by land, boat
+  or air) cheaper.
+- **📦 Supply drops:** crates appear on unclaimed land every 30–50 seconds
+  (up to four at a time). Whoever captures the cell first gets +600 gold,
+  +25% troops or a free building upgrade.
+
+**Navy**
+- Build a **🚢 shipyard** on your coast, then tap it to launch warships:
+  - **⚓ Battleship (400g):** every 2.5 seconds it fires at the nearest
+    enemy target within about 14 cells: warships first, then troop boats
+    (it sinks them, troops and all), then coastal buildings and land. It
+    takes 5 hits to sink.
+  - **🛩️ Aircraft carrier (1,500g):** a mobile airfield. ✈ Drop can launch
+    from wherever it is (level 2 airfield range and reload). It has no guns
+    and takes 10 hits to sink, so escort it.
+- **Moving ships:** tap one of your ships to select it (a ring appears),
+  then tap the sea, or near a coast, to send it there. It finds its own
+  route, and a dashed line shows where it's heading.
+- Artillery fires at enemy ships in range too. AI nations with a coastline
+  build shipyards and send fleets against enemy coasts.
 
 **Artillery** shells enemy land and buildings within range. Hits kill troops
 and blast land back to neutral.

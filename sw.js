@@ -1,7 +1,7 @@
 'use strict';
 
 // Bump the version whenever a cached file changes so phones pick it up.
-const CACHE = 'pixel-war-v27';
+const CACHE = 'pixel-war-v32';
 const ASSETS = [
   './',
   './index.html',

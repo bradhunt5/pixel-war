@@ -204,6 +204,41 @@
       noise(1.4, 0.6, 500, 0.4, echo);             // the shockwave arriving
       noise(2.5, 0.35, 250, 1.2);                  // debris settling
     },
+    // The Tsar Bomba: a longer, deeper, heavier nuke with a second shockwave.
+    tsar: () => {
+      const echo = echoBus(0.4, 0.5);
+      const dirt = distortion(6);
+      noise(0.25, 1.0, 9000, 0, echo);
+      tone('sine', 70, 14, 4, 1.0, 0, dirt);
+      tone('triangle', 45, 18, 4.5, 0.7, 0.03);
+      noise(5.5, 0.9, 1200, 0.05, echo);
+      noise(2, 0.75, 450, 0.9, echo);              // the second shockwave
+      noise(4, 0.4, 220, 2);
+    },
+    // A SAM interceptor blowing up its target in mid-air: a deep, echoing
+    // boom (a smaller cousin of the nuke).
+    intercept: () => {
+      const echo = echoBus(0.22, 0.35);
+      const dirt = distortion(3);
+      noise(0.1, 0.75, 6000, 0, echo);             // the crack of the warhead
+      tone('sine', 110, 26, 1.1, 0.9, 0, dirt);    // the boom, overdriven
+      tone('triangle', 60, 24, 1.3, 0.45, 0.02);   // sub-bass weight
+      noise(1.6, 0.6, 1000, 0.03, echo);           // the rolling rumble
+      noise(1.2, 0.3, 300, 0.35);                  // debris falling away
+    },
+    // A SAM firing its interceptor: a rising rocket whoosh.
+    samLaunch: () => {
+      noise(0.08, 0.5, 5000);
+      tone('sawtooth', 260, 1500, 0.5, 0.06);
+      noise(0.7, 0.45, 3200, 0.02);
+    },
+    // An aircraft passing overhead.
+    plane: () => {
+      noise(1.6, 0.3, 700);
+      tone('sawtooth', 110, 95, 1.6, 0.05);
+    },
+    // Picking up a supply crate: a bright, happy arpeggio.
+    crate: () => [659, 784, 988, 1319].forEach((f, k) => tone('square', f, f, 0.09, 0.07, k * 0.06)),
     fallen: () => [659, 523, 392].forEach((f, k) => tone('triangle', f, f, 0.16, 0.14, k * 0.11)),
     victory: () => [523, 659, 784, 1047, 784, 1047].forEach((f, k) =>
       tone('square', f, f, k === 5 ? 0.5 : 0.14, 0.1, k * 0.13)),

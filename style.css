@@ -480,3 +480,5 @@ button.team-b { cursor: pointer; }
 .switch input:checked + .track { background: var(--accent); border-color: var(--accent-hi); }
 .switch input:checked + .track .knob { transform: translateX(22px); }
 .switch input:focus-visible + .track { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+
+.build-list { max-height: calc(100vh - 260px); overflow-y: auto; }
