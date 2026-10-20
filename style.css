@@ -420,3 +420,35 @@ body.mp-client #btn-speed { visibility: hidden; }
 
 body.mp-connecting #btn-ready,
 body.mp-connecting .lobby-colour-field { display: none; }
+
+.team-b {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+button.team-b { cursor: pointer; }
+.team-b.t1 { background: rgba(59, 130, 246, 0.3); color: #dbeafe; border-color: rgba(96, 165, 250, 0.7); }
+.team-b.t2 { background: rgba(239, 68, 68, 0.3); color: #fee2e2; border-color: rgba(248, 113, 113, 0.7); }
+.team-b.t3 { background: rgba(234, 179, 8, 0.3); color: #fef9c3; border-color: rgba(250, 204, 21, 0.7); }
+#board .tm {
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+#board .bn { max-width: 9.5em; overflow: hidden; text-overflow: ellipsis; }
+#board .tr {
+  min-width: 3.2em;
+  padding-left: 8px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}

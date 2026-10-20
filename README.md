@@ -72,7 +72,8 @@ building, upgrades, artillery, nukes and the end of the game. Tap 🔊 at the
 top of the screen to mute them. The setting is remembered.
 
 The HUD shows troops and troop cap, gold, your share of the land, the clock
-and a leaderboard. The bottom line lists your attacks and boats in progress,
+and a leaderboard showing each nation's share of the land and its troops (the
+map labels show just names). The bottom line lists your attacks and boats in progress,
 or warns you about incoming attacks. **1× / 2× / 3×** changes the game speed
 and **❚❚** pauses the game. On Android the back button cancels a build or
 nuke, and otherwise pauses the game instead of leaving it.
@@ -96,6 +97,14 @@ are AI nations by default, and the host taps a slot to switch its AI on or
 off (switch them all off for humans only). Each new player takes the next
 slot. Your menu colour is your first choice, and you can change it in the
 lobby.
+
+**Teams:** the host taps a slot's team badge to cycle **No team → Team 1 →
+Team 2 → Team 3**, for players and AI slots alike. Allies can't attack,
+shell, land boats on or nuke each other, and AI allies leave you alone.
+Nukes still hit everything in their blast, so mind where you drop them.
+The game ends when only one team (or lone nation) is left, and everyone on
+that team wins, including teammates knocked out earlier. With no teams set,
+it's every nation for itself.
 
 1. Everyone types a name under **Multiplayer** on the main menu.
 2. One person picks the map and difficulty, then taps **Host game**. A

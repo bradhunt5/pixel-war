@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.4.3';
+  const APP_VERSION = '1.5.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -230,6 +230,15 @@
   // Scale a distance (sc) or an area (sc2) to this map's resolution.
   const sc = (v) => v * G.scale;
   const sc2 = (v) => v * G.scale * G.scale;
+  // Factions a and b (ids; -1 is unclaimed land) are friends: the same
+  // faction, or both on the same team. Allies never attack each other.
+  function allied(a, b) {
+    if (a === b) return true;
+    if (a < 0 || b < 0) return false;
+    const ta = G.factions[a].team;
+    return !!ta && ta === G.factions[b].team;
+  }
+
   const cellDist = (a, b) => Math.hypot(ddx(a, b), cy(a) - cy(b));
 
   function fmt(n) {
@@ -530,13 +539,15 @@
       sa: 0,
       capital: -1,
       kills: 0,
+      team: 0,
       nextThink: 1 + Math.random() * 2,
     }, opts);
   }
 
   // humans: [{ name, colour }] for the human players (single player: just you).
-  // aiCount: number of AI nations (defaults to the menu's single-player setting).
-  function newGame(demo, humans, aiCount) {
+  // aiCount: number of AI nations (defaults to the menu's single-player
+  // setting); teams: team number (0 = none) for each faction in order.
+  function newGame(demo, humans, aiCount, teams) {
     $('over').classList.remove('show');
     closeBuildSheet();
     acc = 0;
@@ -570,11 +581,13 @@
       if (id < humans.length) {
         G.factions.push(makeFaction(id, {
           isPlayer: true, player: humans[id].name, name: G.mp ? humans[id].name : 'You', colour: humanColours[id],
+          team: teams ? teams[id] || 0 : 0,
         }));
       } else {
         const persona = personas[(id - humans.length) % personas.length];
         G.factions.push(makeFaction(id, {
           colour: aiColours[id - humans.length],
+          team: teams ? teams[id] || 0 : 0,
           persona: persona.label,
           aggr: clamp(persona.aggr + diff.aggr, 0.05, 1),
           income: demo ? 1 : diff.income,
@@ -1195,7 +1208,7 @@
     let best = -1;
     let bestD = Infinity;
     for (const t of G.buildings.values()) {
-      if (t.owner === b.owner) continue;
+      if (allied(t.owner, b.owner)) continue;
       const d = cellDist(t.cell, b.cell);
       if (d <= sc(ART_RANGE[b.level - 1]) && d < bestD) {
         bestD = d;
@@ -1212,7 +1225,7 @@
       const y = Math.round(y0 + Math.sin(ang) * r);
       if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
       const o = G.owner[y * G.gw + x];
-      if (o >= 0 && o !== b.owner) return y * G.gw + x;
+      if (o >= 0 && !allied(o, b.owner)) return y * G.gw + x;
     }
     return -1;
   }
@@ -1258,7 +1271,7 @@
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const i = y * G.gw + x;
         const o = G.owner[i];
-        if (o < 0 || o === s.owner) continue;
+        if (o < 0 || allied(o, s.owner)) continue;
         // A surviving building shrugs off the hit and keeps its cell.
         if (hitBuilding(i)) continue;
         const def = G.factions[o];
@@ -1428,7 +1441,7 @@
     let best = null;
     let bestScore = 0;
     for (const e of G.factions) {
-      if (!e.alive || e.id === f.id) continue;
+      if (!e.alive || allied(e.id, f.id)) continue;
       const score = e.cells * (e.isPlayer ? G.diff.playerBias : 1);
       if (score > bestScore) {
         bestScore = score;
@@ -1451,7 +1464,7 @@
         for (let dx = -R; dx <= R; dx += 2) {
           const x = wx(x0 + dx);
           const y = y0 + dy;
-          if (x >= 0 && y >= 0 && x < G.gw && y < G.gh && G.owner[y * G.gw + x] === f.id) return false;
+          if (x >= 0 && y >= 0 && x < G.gw && y < G.gh && allied(G.owner[y * G.gw + x], f.id)) return false;
         }
       }
       return true;
@@ -1467,7 +1480,7 @@
     }
     let strongest = null;
     for (const o of scan.counts.keys()) {
-      if (o >= 0 && (!strongest || G.factions[o].troops > strongest.troops)) strongest = G.factions[o];
+      if (o >= 0 && !allied(o, f.id) && (!strongest || G.factions[o].troops > strongest.troops)) strongest = G.factions[o];
     }
     const wants = [];
     const deposit = G.depositCells.find((d) => !canPlace(f, 'mine', d));
@@ -1505,7 +1518,7 @@
     for (let tries = 0; tries < 300; tries++) {
       const i = Math.floor(Math.random() * G.n);
       const o = G.owner[i];
-      if (o === WATER || o === f.id) continue;
+      if (o === WATER || allied(o, f.id)) continue;
       if (o >= 0 && G.factions[o].troops > f.troops * 0.6) continue;
       if (!launchBoat(f.id, i, f.troops * (0.4 + 0.3 * f.aggr))) return true;
       return false;
@@ -1524,7 +1537,7 @@
     let best = null;
     let bestScore = 0;
     for (const [o, shared] of scan.counts) {
-      if (o < 0) continue;
+      if (o < 0 || allied(o, f.id)) continue;
       const e = G.factions[o];
       const power = f.troops * (0.4 + 0.5 * aggr);
       const need = e.troops * (1.4 - aggr * 0.6) + 1.5 * Math.min(e.cells, shared * 3) + 1;
@@ -1586,11 +1599,13 @@
     checkEnd();
   }
 
-  // Host only. The war ends when one nation is left, or no humans are.
+  // Host only. The war ends when one side is left (a nation, or a team of
+  // allies), or no humans are.
   function checkEnd() {
     const alive = G.factions.filter((f) => f.alive);
     const humans = alive.filter((f) => f.isPlayer);
-    if (alive.length === 1 || !humans.length) {
+    const sides = new Set(alive.map((f) => (f.team ? 't' + f.team : 'f' + f.id)));
+    if (sides.size === 1 || !humans.length) {
       const winner = alive.sort((a, b) => b.cells - a.cells)[0];
       endGame(winner ? winner.id : -1);
     } else if (!G.factions[myId].alive) {
@@ -1613,7 +1628,8 @@
     closeBuildSheet();
     updateBanner();
     const me = G.factions[myId];
-    const won = final && G.winner === myId;
+    // On a team, your side winning counts even if you were knocked out.
+    const won = final && G.winner >= 0 && allied(G.winner, myId);
     sfx(won ? 'victory' : 'defeat');
     if (!G.recorded) {
       G.recorded = true;
@@ -1633,7 +1649,9 @@
     const winner = final && G.winner >= 0 ? G.factions[G.winner] : null;
     const leader = G.factions.filter((f) => f.alive && f.id !== myId).sort((a, b) => b.cells - a.cells)[0];
     let sub;
-    if (won) sub = 'Every rival has fallen. The map is yours.';
+    if (won && me.team && G.winner !== myId) sub = `Your team won! ${G.factions[G.winner].name} finished the job.`;
+    else if (won && me.team) sub = 'Your team won! The map is yours.';
+    else if (won) sub = 'Every rival has fallen. The map is yours.';
     else if (me.alive && winner) sub = `${winner.name} has won the war.`;
     else sub = `Your last pixel fell${leader ? '. ' + leader.name + (leader.persona ? ` (${leader.persona})` : '') + ' leads the map' : ''}.`;
     $('over-sub').textContent = sub;
@@ -1687,6 +1705,7 @@
     const o = G.owner[i];
     if (o === WATER) return fail('Tap land to attack. Boats sail automatically');
     if (o === fid) return fail("That's already yours. Tap a neighbour");
+    if (allied(fid, o)) return fail(`${G.factions[o].name} is your ally`);
     const amount = me.troops * clamp(Number(pct) || 50, 1, 100) / 100;
     if (amount < 2) return fail('Not enough troops yet');
     if (neighbourScan(fid).counts.has(o) && landRouteIsShort(fid, i)) {
@@ -1716,6 +1735,7 @@
   function actNuke(fid, i) {
     if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
+    if (allied(fid, G.owner[i])) return fail("That's your ally's land! Pick an enemy target");
     const err = launchNuke(G.factions[fid], i);
     return err ? fail(err) : { ok: true, msg: '' };
   }
@@ -2172,14 +2192,84 @@
     return { vol: distance * zoom, pan: clamp(dx / (w / 2), -1, 1) * 0.7 };
   }
 
-  function centroid(f) {
-    let gx = f.sx / f.cells;
-    if (G.wrap) {
-      // Circular mean, so a nation straddling the date line is labelled on it.
-      const ang = Math.atan2(f.sa, f.ca);
-      gx = ((ang / (2 * Math.PI)) * G.gw + G.gw) % G.gw;
+  // ---------- Nation name labels ----------
+  //
+  // Each name sits at the point deepest inside its nation's land (furthest
+  // from any border), so it never floats over the sea or a neighbour. The
+  // spot is worked out about once a second and only moves when the old one
+  // is clearly no longer a good fit.
+
+  const LABEL_EVERY = 1000;       // ms between placements
+  let labelAt = -Infinity;
+  let labelGame = null;
+  const labels = new Map();       // faction id -> { cell, depth }
+
+  // Chamfer distance (in cells) from every owned cell to its nation's edge.
+  function borderDistances() {
+    const { gw, gh, owner, n } = G;
+    if (!G.labelDepth || G.labelDepth.length !== n) G.labelDepth = new Float32Array(n);
+    const d = G.labelDepth;
+    const D = 1.414;
+    const at = (i, o) => (owner[i] === o ? d[i] : 0);
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const i = y * gw + x;
+        const o = owner[i];
+        if (o < 0) {
+          d[i] = 0;
+          continue;
+        }
+        let v = 1e9;
+        v = Math.min(v, (x > 0 ? at(i - 1, o) : 0) + 1);
+        v = Math.min(v, (y > 0 ? at(i - gw, o) : 0) + 1);
+        v = Math.min(v, (x > 0 && y > 0 ? at(i - gw - 1, o) : 0) + D);
+        v = Math.min(v, (x < gw - 1 && y > 0 ? at(i - gw + 1, o) : 0) + D);
+        d[i] = v;
+      }
     }
-    return { x: sx(gx + 0.5), y: sy(f.sy / f.cells + 0.5) };
+    for (let y = gh - 1; y >= 0; y--) {
+      for (let x = gw - 1; x >= 0; x--) {
+        const i = y * gw + x;
+        const o = owner[i];
+        if (o < 0) continue;
+        let v = d[i];
+        v = Math.min(v, (x < gw - 1 ? at(i + 1, o) : 0) + 1);
+        v = Math.min(v, (y < gh - 1 ? at(i + gw, o) : 0) + 1);
+        v = Math.min(v, (x < gw - 1 && y < gh - 1 ? at(i + gw + 1, o) : 0) + D);
+        v = Math.min(v, (x > 0 && y < gh - 1 ? at(i + gw - 1, o) : 0) + D);
+        d[i] = v;
+      }
+    }
+    return d;
+  }
+
+  function placeLabels(now) {
+    if (labelGame !== G) {
+      labelGame = G;
+      labels.clear();
+      labelAt = -Infinity;
+    }
+    if (now - labelAt < LABEL_EVERY) return;
+    labelAt = now;
+    const d = borderDistances();
+    const best = new Map();
+    for (let i = 0; i < G.n; i++) {
+      const o = G.owner[i];
+      if (o < 0) continue;
+      const b = best.get(o);
+      if (!b || d[i] > b.depth) best.set(o, { cell: i, depth: d[i] });
+    }
+    labels.clear();
+    for (const [o, b] of best) {
+      const prev = labelGame.prevLabels && labelGame.prevLabels.get(o);
+      // Stay put while the old spot is still nearly as good.
+      if (prev && G.owner[prev.cell] === o && d[prev.cell] >= b.depth * 0.8) {
+        labels.set(o, { cell: prev.cell, depth: d[prev.cell] });
+      } else {
+        labels.set(o, b);
+      }
+    }
+    labelGame.prevLabels = new Map(labels);
   }
 
   function drawLabels() {
@@ -2187,21 +2277,29 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
+    // Fade a little when zoomed right out, so names don't clutter the view.
+    const zoomedIn = clamp(Math.log(view.cell / view.minCell) / Math.log(2), 0, 1);
+    const alpha = 0.6 + 0.4 * zoomedIn;
     for (const f of G.factions) {
-      if (!f.alive || f.cells === 0) continue;
-      const { x, y } = centroid(f);
-      const size = clamp(Math.sqrt(f.cells) * view.cell * 0.16, 11 * dpr, 22 * dpr);
-      if (!onScreen(x, y, size * 8)) continue;
+      const spot = labels.get(f.id);
+      if (!f.alive || !spot) continue;
+      const x = sx(cx(spot.cell) + 0.5);
+      const y = sy(cy(spot.cell) + 0.5);
+      // The name must fit inside the circle of land around the spot.
+      const room = spot.depth * view.cell;
+      ctx.font = '800 100px system-ui, sans-serif';
+      const width100 = ctx.measureText(f.name).width;
+      const size = Math.min(1.8 * room / width100 * 100, room * 0.9, 24 * dpr);
+      if (size < 9 * dpr || !onScreen(x, y, size * 6)) continue;
+      ctx.globalAlpha = alpha;
       ctx.font = `800 ${size}px system-ui, sans-serif`;
-      ctx.lineWidth = size * 0.28;
+      ctx.lineWidth = size * 0.26;
       ctx.strokeStyle = 'rgba(0,0,0,0.75)';
       ctx.fillStyle = '#fff';
-      ctx.strokeText(f.name, x, y - size * 0.55);
-      ctx.fillText(f.name, x, y - size * 0.55);
-      ctx.font = `700 ${size * 0.85}px system-ui, sans-serif`;
-      ctx.strokeText(fmt(f.troops), x, y + size * 0.5);
-      ctx.fillText(fmt(f.troops), x, y + size * 0.5);
+      ctx.strokeText(f.name, x, y);
+      ctx.fillText(f.name, x, y);
     }
+    ctx.globalAlpha = 1;
   }
 
   function drawBoats() {
@@ -2330,6 +2428,7 @@
       drawProjectiles();
       drawFx(now);
       if (!G.demo) {
+        placeLabels(now);
         drawLabels();
         drawAttackMarkers(now);
       }
@@ -2405,8 +2504,10 @@
         .slice(0, 6)
         .map((f) => {
           const pc = (f.cells / G.landCells * 100).toFixed(1);
+          const tag = f.team ? `<span class="tm">T${f.team}</span>` : '';
           return `<li class="${f.id === myId ? 'me' : ''}"><span class="sw" style="background:${f.css}"></span>`
-            + `${f.name}<span class="pc">${pc}%</span></li>`;
+            + `${tag}<span class="bn">${f.name}</span><span class="pc">${pc}%</span>`
+            + `<span class="tr">${fmt(f.troops)}</span></li>`;
         });
       $('board').innerHTML = rows.join('');
       if ($('build-sheet').classList.contains('show')) renderBuildSheet();
@@ -2676,14 +2777,39 @@
 
   const PEER_PREFIX = 'pixelwar-v1-';
   // STUN servers help devices behind home routers find a direct route.
-  const PEER_OPTIONS = {
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' },
-      ],
-    },
-  };
+  const STUN_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ];
+  // Relay (TURN) servers carry the game when no direct route exists, e.g.
+  // on mobile data or strict work Wi-Fi. This is a Metered.ca "Get TURN
+  // Credential" URL; its apiKey is designed to be public. Leave it empty to
+  // play direct-only.
+  const TURN_CREDENTIALS_URL = '';
+  let iceServers = null;
+
+  // Fetch relay credentials once per session (with a short timeout), then
+  // use them alongside the STUN servers for every connection.
+  async function peerOptions() {
+    if (!iceServers) {
+      iceServers = STUN_SERVERS.slice();
+      if (TURN_CREDENTIALS_URL) {
+        try {
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 4000);
+          const res = await fetch(TURN_CREDENTIALS_URL, { signal: ctl.signal });
+          clearTimeout(timer);
+          const relays = await res.json();
+          if (Array.isArray(relays)) iceServers = iceServers.concat(relays);
+        } catch (e) {
+          console.warn('[net] relay credentials unavailable; direct connections only', e);
+          iceServers = null; // Try again next time.
+          return { config: { iceServers: STUN_SERVERS } };
+        }
+      }
+    }
+    return { config: { iceServers } };
+  }
   const CONNECT_TIMEOUT = 15000;
   const CONNECT_FAIL = 'Couldn\'t connect to the host. A network between you is blocking direct connections '
     + '(common on mobile data and work or school Wi-Fi). Try both devices on the same Wi-Fi.';
@@ -2704,7 +2830,8 @@
     $('btn-ready').classList.toggle('hidden', net.role !== 'client');
     $('lobby-note').textContent = net.role === 'host'
       ? 'Friends open Pixel War on any device (browser, Android or Windows), tap Join and enter this code. '
-        + 'Tap an AI slot to switch it on or off. The map and difficulty come from your menu settings.'
+        + 'Tap an AI slot to switch it on or off, and a team badge to put nations on the same side. '
+        + 'The map and difficulty come from your menu settings.'
       : 'Pick a colour, then tap Ready. The host starts the game once everyone is ready.';
   }
 
@@ -2712,7 +2839,18 @@
   // AI slots the host can switch on or off.
   // players: [{ name, colour, ready }]; you: this device's entry;
   // countdown: seconds until a forced start, or null; aiOn: per-slot flags.
-  function renderLobby(players, you, countdown, force, aiOn, info) {
+  const teamLabel = (t) => (t ? `Team ${t}` : 'No team');
+
+  // A team badge for a lobby row: a button for the host, a label otherwise.
+  function teamBadge(slot, team, you) {
+    const cls = `team-b t${team}`;
+    return you === 0
+      ? `<button class="${cls}" data-team-slot="${slot}" aria-label="Change team">${teamLabel(team)}</button>`
+      : `<span class="${cls}">${teamLabel(team)}</span>`;
+  }
+
+  function renderLobby(players, you, countdown, force, aiOn, info, teams) {
+    teams = teams || [];
     const lobbyForce = net.role === 'host' ? net.forceAllowed : force;
     net.lobby = players;
     net.you = you;
@@ -2726,11 +2864,13 @@
       if (p) {
         const status = slot === 0 ? 'Host' : p.ready ? '✓ Ready' : 'Not ready';
         rows.push(`<li class="${slot === you ? 'me' : ''}"><span class="sw" style="background:${colourCss(p.colour)}"></span>`
-          + `<span class="pn">${p.name}</span><span class="ps ${p.ready || slot === 0 ? 'ok' : ''}">${status}</span></li>`);
+          + `<span class="pn">${p.name}</span>${teamBadge(slot, teams[slot] || 0, you)}`
+          + `<span class="ps ${p.ready || slot === 0 ? 'ok' : ''}">${status}</span></li>`);
       } else if (aiOn[slot]) {
         const colour = leftover[nextAi++];
         rows.push(`<li class="ai ${you === 0 ? 'tog' : ''}" data-slot="${slot}"><span class="sw" style="background:${colourCss(colour)}"></span>`
-          + `<span class="pn">AI nation</span><span class="ps on">${you === 0 ? 'AI on' : 'AI'}</span></li>`);
+          + `<span class="pn">AI nation</span>${teamBadge(slot, teams[slot] || 0, you)}`
+          + `<span class="ps on">${you === 0 ? 'AI on' : 'AI'}</span></li>`);
       } else {
         rows.push(`<li class="off ${you === 0 ? 'tog' : ''}" data-slot="${slot}"><span class="sw empty"></span>`
           + `<span class="pn">Empty</span><span class="ps">${you === 0 ? 'AI off' : 'Empty'}</span></li>`);
@@ -2773,10 +2913,20 @@
   const lobbyInfo = () => `${MAP_NAMES[settings.map] || 'Random'} map · `
     + `${settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1)} AI`;
 
-  // Host taps an AI or empty slot to switch the AI on or off.
+  // Host taps a team badge to cycle No team → Team 1 → 2 → 3, or an AI or
+  // empty slot to switch the AI on or off.
   $('lobby-players').addEventListener('click', (e) => {
+    if (net.role !== 'host') return;
+    const badge = e.target.closest('[data-team-slot]');
+    if (badge) {
+      const slot = Number(badge.dataset.teamSlot);
+      net.teams[slot] = ((net.teams[slot] || 0) + 1) % 4;
+      sfx('tap');
+      lobbyBroadcast();
+      return;
+    }
     const li = e.target.closest('li[data-slot]');
-    if (!li || net.role !== 'host') return;
+    if (!li) return;
     const slot = Number(li.dataset.slot);
     net.aiOn[slot] = !net.aiOn[slot];
     sfx('tap');
@@ -2800,11 +2950,13 @@
     const players = lobbyPlayers();
     const countdown = net.countdownEnd ? Math.max(0, Math.ceil((net.countdownEnd - Date.now()) / 1000)) : null;
     const info = lobbyInfo();
-    renderLobby(players, 0, countdown, net.forceAllowed, net.aiOn, info);
+    renderLobby(players, 0, countdown, net.forceAllowed, net.aiOn, info, net.teams);
     let k = 1;
     for (const p of net.conns.values()) {
       if (p.conn.open) {
-        p.conn.send({ t: 'lobby', code: net.code, players, you: k, countdown, force: !!net.forceAllowed, aiOn: net.aiOn, info });
+        p.conn.send({
+          t: 'lobby', code: net.code, players, you: k, countdown, force: !!net.forceAllowed, aiOn: net.aiOn, info, teams: net.teams,
+        });
       }
       k++;
     }
@@ -2872,7 +3024,7 @@
     sfx('tap');
   });
 
-  function hostGame() {
+  async function hostGame() {
     if (!window.Peer) {
       toast('Multiplayer could not load. Check your connection');
       return;
@@ -2881,10 +3033,13 @@
     net.role = 'host';
     net.hostColour = settings.colour;
     net.aiOn = new Array(MAX_FACTIONS).fill(true);
+    net.teams = new Array(MAX_FACTIONS).fill(0);
     net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
     document.body.classList.add('mp');
     showLobby('Creating a room…');
-    const peer = new window.Peer(PEER_PREFIX + net.code, PEER_OPTIONS);
+    const options = await peerOptions();
+    if (net.role !== 'host') return; // Left while we were waiting.
+    const peer = new window.Peer(PEER_PREFIX + net.code, options);
     net.peer = peer;
     peer.on('open', () => {
       if (net.opened) return;
@@ -2994,8 +3149,11 @@
     if (net.role !== 'host' || !net.conns.size) return;
     const unready = [...net.conns.values()].map((p) => !p.ready);
     const humans = lobbyPlayers();
-    const ais = net.aiOn.slice(humans.length).filter(Boolean).length;
-    newGame(false, humans, ais);
+    // Teams follow the lobby slots: humans first, then each AI slot left on.
+    const aiSlots = [];
+    for (let slot = humans.length; slot < MAX_FACTIONS; slot++) if (net.aiOn[slot]) aiSlots.push(slot);
+    const teams = humans.map((_, k) => net.teams[k]).concat(aiSlots.map((slot) => net.teams[slot]));
+    newGame(false, humans, aiSlots.length, teams);
     net.forceAllowed = false;
     // Players who weren't ready get a random start so nobody is held up.
     unready.forEach((away, k) => {
@@ -3020,7 +3178,7 @@
         difficulty: settings.difficulty,
         version: APP_VERSION,
         factions: G.factions.map((f) => ({
-          name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: f.colour,
+          name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: f.colour, team: f.team,
         })),
         parts: parts.length,
       });
@@ -3094,7 +3252,7 @@
     clearTracking();
   }
 
-  function joinGame(code) {
+  async function joinGame(code) {
     code = String(code || '').trim().toUpperCase();
     if (!/^[A-Z]{4}$/.test(code)) {
       toast('Room codes are 4 letters');
@@ -3112,7 +3270,9 @@
     $('lobby-players').innerHTML = '';
     // Until the host answers there is nothing to pick or ready up for.
     document.body.classList.add('mp-connecting');
-    const peer = new window.Peer(PEER_OPTIONS);
+    const options = await peerOptions();
+    if (net.role !== 'client') return; // Left while we were waiting.
+    const peer = new window.Peer(options);
     net.peer = peer;
     keepAlive(peer);
     peer.on('open', () => {
@@ -3146,7 +3306,7 @@
       net.connected = true;
       document.body.classList.remove('mp-connecting');
       net.code = msg.code;
-      renderLobby(msg.players, msg.you, msg.countdown, msg.force, msg.aiOn || [], msg.info);
+      renderLobby(msg.players, msg.you, msg.countdown, msg.force, msg.aiOn || [], msg.info, msg.teams);
     } else if (msg.t === 'refused') {
       netFail(msg.why);
     } else if (msg.t === 'start') {
@@ -3227,6 +3387,7 @@
     G.mp = true;
     G.factions = msg.factions.map((f, id) => makeFaction(id, {
       name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: COLOURS[f.colour] ? f.colour : 0,
+      team: f.team || 0,
     }));
     // Stay on the lobby screen until every piece of the map has arrived.
     G.loading = true;
