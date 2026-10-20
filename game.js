@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.2';
+  const APP_VERSION = '1.9.3';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -561,6 +561,7 @@
       changed: [],
       changedMark: new Uint8Array(n),
       radEvents: [],
+      nukeEvents: [],
       fxEvents: [],
       events: [],
     };
@@ -2056,10 +2057,13 @@
     announce({ k: 'crate', f: f.id, what });
   }
 
-  function nukeImpact(m) {
-    const x0 = cx(m.to);
-    const y0 = cy(m.to);
-    const R = m.radius;
+  // Flatten the land around a nuke's target and leave fallout. The host and
+  // every joiner run this the same way, so multiplayer only has to send the
+  // impact itself: listing every cell of a Tsar Bomba's blast made one
+  // update about 100 KB, too big for phones' connections.
+  function blastArea(to, R, tsar, hit) {
+    const x0 = cx(to);
+    const y0 = cy(to);
     for (let dy = -R; dy <= R; dy++) {
       for (let dx = -R; dx <= R; dx++) {
         if (dx * dx + dy * dy > R * R) continue;
@@ -2067,18 +2071,29 @@
         const y = y0 + dy;
         if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
         const i = y * G.gw + x;
-        const o = G.owner[i];
-        if (o === WATER) continue;
-        if (o >= 0) {
-          const def = G.factions[o];
-          def.troops = Math.max(0, def.troops - def.troops / Math.max(1, def.cells) * 1.5);
-        }
-        setOwner(i, NEUTRAL);
+        if (G.owner[i] === WATER) continue;
+        hit(i);
         if (G.rad[i] <= 0) G.radList.push(i);
-        G.rad[i] = (m.tsar ? TSAR_RAD_TIME : RAD_TIME) * (1 - Math.hypot(dx, dy) / (R + 1) * 0.5);
-        if (G.track) G.radEvents.push(i, Math.round(G.rad[i] * 10) / 10);
+        G.rad[i] = (tsar ? TSAR_RAD_TIME : RAD_TIME) * (1 - Math.hypot(dx, dy) / (R + 1) * 0.5);
       }
     }
+    G.dirty = true;
+  }
+
+  function nukeImpact(m) {
+    const R = m.radius;
+    const track = G.track;
+    G.track = false;
+    blastArea(m.to, R, m.tsar, (i) => {
+      const o = G.owner[i];
+      if (o >= 0) {
+        const def = G.factions[o];
+        def.troops = Math.max(0, def.troops - def.troops / Math.max(1, def.cells) * 1.5);
+      }
+      setOwner(i, NEUTRAL);
+    });
+    G.track = track;
+    if (track) G.nukeEvents.push([m.to, R, m.tsar ? 1 : 0]);
     // The Tsar Bomba has its own colour code so it gets the bigger sound.
     addFx(m.to, R * 2.2, m.tsar ? '255,250,230' : '255,240,200', m.tsar ? 2200 : 1400);
     addFx(m.to, R * 1.2, '255,120,40', m.tsar ? 1600 : 1000);
@@ -3935,25 +3950,46 @@
     if (G && net.role !== 'client' && ((G.demo && G.state === 'menu') || G.state === 'play')) {
       acc += dt * (G.demo ? 1.5 : speed);
       let steps = 0;
-      while (acc >= TICK && steps < 40) {
-        tick();
-        acc -= TICK;
-        steps++;
-        if (!G || G.state === 'over') break;
-      }
+      guard(() => {
+        while (acc >= TICK && steps < 40) {
+          // Count the step even if it fails, so a bad tick can't repeat forever.
+          acc -= TICK;
+          steps++;
+          tick();
+          if (!G || G.state === 'over') break;
+        }
+      });
     }
     if (net.role === 'host' && now - net.lastSend > 100) {
       net.lastSend = now;
-      netBroadcast();
+      guard(netBroadcast);
     }
   }
 
   function frame(now) {
-    step(now);
-    updateMusic(now);
-    render(now);
-    updateHud(false);
+    // Ask for the next frame first, so one error can never stop the game
+    // (for a host, that would freeze it for everyone).
     requestAnimationFrame(frame);
+    guard(() => step(now));
+    guard(() => {
+      updateMusic(now);
+      render(now);
+      updateHud(false);
+    });
+  }
+
+  let errorShownAt = -Infinity;
+  function guard(fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error('[game]', e);
+      if (performance.now() - errorShownAt > 10000) {
+        errorShownAt = performance.now();
+        toast(`Something went wrong (${e.message}). The game carries on`);
+        if (net.role === 'client' && net.host && net.host.open) net.host.send({ t: 'error', msg: String(e.message).slice(0, 120) });
+      }
+    }
   }
 
   // The screen stops refreshing while the app is in the background (and
@@ -3963,7 +3999,7 @@
   // page's own timers) steps the game whenever frames have stalled.
   let beat = null;
   function backgroundBeat() {
-    if (net.role && performance.now() - last > 150) step(performance.now());
+    if (net.role && performance.now() - last > 150) guard(() => step(performance.now()));
   }
   function startBeat() {
     if (beat) return;
@@ -4714,6 +4750,7 @@
       own: full ? rle(G.owner) : null,
       cells,
       rad: full ? rad : G.radEvents,
+      nukes: full ? [] : G.nukeEvents,
       f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
         Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
       b: full || G.bver !== net.sentBver
@@ -4736,15 +4773,26 @@
     for (const i of G.changed) G.changedMark[i] = 0;
     G.changed = [];
     G.radEvents = [];
+    G.nukeEvents = [];
     G.fxEvents = [];
     G.events = [];
   }
+
+  // Updates bigger than this are sent in pieces (as the map is at the start),
+  // e.g. after a big land grab while the host's app was in the background.
+  const CELL_PART = 3000;
 
   function netBroadcast() {
     if (!G || G.demo || !G.track) return;
     if (net.conns.size) {
       const snap = snapshot(false);
-      for (const p of net.conns.values()) if (p.fid >= 0 && p.conn.open) p.conn.send(snap);
+      const parts = [];
+      while (snap.cells.length > CELL_PART) parts.push(snap.cells.splice(0, CELL_PART));
+      for (const p of net.conns.values()) {
+        if (p.fid < 0 || !p.conn.open) continue;
+        for (const d of parts) p.conn.send({ t: 'cells', d });
+        p.conn.send(snap);
+      }
       net.sentBver = G.bver;
     }
     clearTracking();
@@ -4904,6 +4952,11 @@
       clientGuard('Couldn\'t start the game', () => clientStart(msg));
     } else if (msg.t === 'own') {
       if (G && G.loading) clientGuard('Couldn\'t load the map', () => receivePart(msg));
+    } else if (msg.t === 'cells') {
+      if (G && !G.demo) {
+        if (G.loading) G.pendingSnaps.push(msg);
+        else clientGuard('Lost sync with the host', () => applyCells(msg.d));
+      }
     } else if (msg.t === 'snap') {
       if (G && !G.demo) {
         if (G.loading) G.pendingSnaps.push(msg);
@@ -4956,7 +5009,10 @@
       view.cell = 0;
     }
     resize();
-    for (const snap of G.pendingSnaps) applySnapshot(snap);
+    for (const snap of G.pendingSnaps) {
+      if (snap.t === 'cells') applyCells(snap.d);
+      else applySnapshot(snap);
+    }
     G.pendingSnaps = [];
     updateBanner();
     updateHud(true);
@@ -4985,6 +5041,10 @@
     G.pendingSnaps = [];
   }
 
+  function applyCells(cells) {
+    for (let k = 0; k < cells.length; k += 2) assignCell(cells[k], cells[k + 1]);
+  }
+
   function applySnapshot(s) {
     const dt = Math.max(0, s.time - G.time);
     G.time = s.time;
@@ -4994,12 +5054,14 @@
         for (let r = 0; r < s.own[k + 1]; r++, p++) assignCell(p, s.own[k]);
       }
     }
-    for (let k = 0; k < s.cells.length; k += 2) assignCell(s.cells[k], s.cells[k + 1]);
     // Fallout decays locally; the host only reports fresh contamination.
     if (dt && G.radList.length) {
       G.radList = G.radList.filter((i) => (G.rad[i] -= dt) > 0 || ((G.rad[i] = 0), false));
       G.dirty = true;
     }
+    // Nukes that landed since the last update, then any later changes.
+    for (const [to, R, tsar] of s.nukes || []) blastArea(to, R, !!tsar, (i) => assignCell(i, NEUTRAL));
+    applyCells(s.cells);
     for (let k = 0; k < s.rad.length; k += 2) {
       if (G.rad[s.rad[k]] <= 0) G.radList.push(s.rad[k]);
       G.rad[s.rad[k]] = s.rad[k + 1];
