@@ -57,8 +57,11 @@ artillery hit.
 and blast land back to neutral.
 
 **Nukes** cost 900 gold. Tap **☢**, then tap an enemy target (you can't nuke
-your own land). A nuke fires from your best silo, so its blast size and
-reload depend on that silo's level. The missile takes three seconds to
+your own land). Each silo reloads separately, so two silos let you
+fire twice as often, three silos three times as often, and so on. A nuke
+fires from your best ready silo (highest level, then nearest the target),
+and its blast size and reload depend on that silo's level. The ☢ button
+shows how many silos are ready (for example ×2). The missile takes three seconds to
 arrive and everyone can see where it will land. It wipes out troops,
 buildings and ownership within its blast radius. The land stays irradiated
 (green) for about 45 seconds, and while it does it costs 4× as many troops

@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.4.1';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -128,7 +128,7 @@
     },
     silo: {
       label: 'Nuclear silo', icon: '☢️', cost: 1200, step: 1.5, hp: 3,
-      stats: (l) => `Nukes (${NUKE_COST}g): blast radius ${NUKE_RADIUS[l - 1]}, reload ${NUKE_COOLDOWN[l - 1]}s`,
+      stats: (l) => `Nukes (${NUKE_COST}g): blast radius ${NUKE_RADIUS[l - 1]}, reload ${NUKE_COOLDOWN[l - 1]}s. Each silo reloads separately`,
     },
   };
   // Upgrading to level 2 costs 1.2× the base price, to level 3 2.4×.
@@ -531,7 +531,6 @@
       capital: -1,
       kills: 0,
       nextThink: 1 + Math.random() * 2,
-      nextNuke: 0,
     }, opts);
   }
 
@@ -802,6 +801,8 @@
       f.troopBonus = 0;
       f.goldBonus = 0;
       f.siloLevel = 0;
+      f.silosReady = 0;
+      f.nextNuke = Infinity;
     }
     for (const b of G.buildings.values()) {
       const f = G.factions[b.owner];
@@ -814,6 +815,9 @@
         f.goldBonus += MINE_GOLD[l];
       } else if (b.type === 'silo') {
         f.siloLevel = Math.max(f.siloLevel, b.level);
+        const readyAt = b.readyAt || 0;
+        if (readyAt <= G.time) f.silosReady++;
+        f.nextNuke = Math.min(f.nextNuke, readyAt);
       }
     }
   }
@@ -1269,16 +1273,23 @@
     if (!f.built.silo) return 'Build a nuclear silo first';
     if (f.gold < NUKE_COST) return `Nukes cost ${NUKE_COST} gold`;
     if (target < 0) return 'Tap a target on the map';
-    if (G.time < f.nextNuke) return `Silo reloading: ${Math.ceil(f.nextNuke - G.time)}s`;
-    // Fire from the best silo (highest level, then nearest).
+    // Each silo reloads on its own, so more silos means more frequent
+    // launches. Fire from the best ready one: highest level, then nearest.
     let silo = null;
+    let soonest = Infinity;
     for (const b of G.buildings.values()) {
       if (b.type !== 'silo' || b.owner !== f.id) continue;
+      if ((b.readyAt || 0) > G.time) {
+        soonest = Math.min(soonest, b.readyAt);
+        continue;
+      }
       if (!silo || b.level > silo.level
         || (b.level === silo.level && cellDist(b.cell, target) < cellDist(silo.cell, target))) silo = b;
     }
+    if (!silo) return `${f.built.silo > 1 ? 'All silos' : 'Silo'} reloading: ${Math.ceil(soonest - G.time)}s`;
     f.gold -= NUKE_COST;
-    f.nextNuke = G.time + NUKE_COOLDOWN[silo.level - 1];
+    silo.readyAt = G.time + NUKE_COOLDOWN[silo.level - 1];
+    G.bver++;
     G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: Math.round(sc(NUKE_RADIUS[silo.level - 1])) });
     announce({ k: 'nuke', f: f.id });
     return null;
@@ -2368,9 +2379,10 @@
     $('pct-label').textContent = `${settings.pct}% · ${fmt(me.troops * settings.pct / 100)}`;
     const nuke = $('btn-nuke');
     nuke.classList.toggle('hidden', !me.built.silo);
-    const reload = Math.ceil(me.nextNuke - G.time);
+    const reload = me.silosReady ? 0 : Math.ceil(me.nextNuke - G.time);
     nuke.disabled = me.gold < NUKE_COST || reload > 0 || G.state !== 'play';
-    nuke.textContent = reload > 0 ? `☢ ${reload}s` : `☢ ${NUKE_COST}g`;
+    nuke.textContent = reload > 0 ? `☢ ${reload}s`
+      : `☢ ${NUKE_COST}g${me.silosReady > 1 ? ` ×${me.silosReady}` : ''}`;
 
     const mine = G.attacks.filter((a) => a.from === myId);
     const boats = G.boats.filter((b) => b.owner === myId);
@@ -3030,9 +3042,9 @@
       cells,
       rad: full ? rad : G.radEvents,
       f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
-        Math.max(0, f.nextNuke - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
+        0, f.kills, f.name, f.isPlayer ? 1 : 0]),
       b: full || G.bver !== net.sentBver
-        ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp]) : null,
+        ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp, b.readyAt || 0]) : null,
       boats: G.boats.map((b) => {
         const k = Math.floor(b.pos);
         return [b.owner, b.path[k], b.path[Math.min(b.path.length - 1, k + 1)], b.pos - k, Math.round(b.troops)];
@@ -3217,7 +3229,6 @@
       [f.troops, f.gold] = [v[0], v[1]];
       f.alive = !!v[2];
       f.capital = v[3];
-      f.nextNuke = G.time + v[4];
       f.kills = v[5];
       f.name = v[6];
       f.isPlayer = !!v[7];
@@ -3226,8 +3237,8 @@
       for (const b of G.buildings.values()) G.bAt[b.cell] = -1;
       G.buildings = new Map();
       for (const f of G.factions) for (const k of Object.keys(f.built)) f.built[k] = 0;
-      for (const [id, type, cell, owner, level, hp] of s.b) {
-        G.buildings.set(id, { id, type, cell, owner, level, hp });
+      for (const [id, type, cell, owner, level, hp, readyAt] of s.b) {
+        G.buildings.set(id, { id, type, cell, owner, level, hp, readyAt });
         G.bAt[cell] = id;
         G.factions[owner].built[type]++;
       }
