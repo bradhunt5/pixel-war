@@ -153,11 +153,9 @@
 
   const SOUNDS = {
     tap: () => tone('square', 660, 880, 0.06, 0.08),
-    attack: () => {
-      tone('square', 330, 520, 0.09, 0.1);
-      tone('square', 520, 700, 0.08, 0.08, 0.07);
-    },
-    error: () => tone('square', 220, 160, 0.14, 0.08),
+    // Sending troops happens constantly, so it's just a soft, short tick.
+    attack: () => tone('sine', 520, 430, 0.035, 0.035),
+    error: () => tone('sine', 240, 190, 0.07, 0.04),
     boat: () => {
       tone('sawtooth', 150, 140, 0.45, 0.09);
       tone('sawtooth', 190, 180, 0.45, 0.06);
