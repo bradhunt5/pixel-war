@@ -8,6 +8,8 @@
 (() => {
   let ctx = null;
   let master = null;
+  let musicBus = null;            // music has its own volume, under the effects
+  const unlockWaiters = [];
   // The bus the sound being played right now goes through (volume and pan).
   let bus = null;
   let muted = false;
@@ -38,6 +40,10 @@
     master = ctx.createGain();
     master.gain.value = 0.5;
     master.connect(comp);
+    musicBus = ctx.createGain();
+    musicBus.gain.value = 0.32;
+    musicBus.connect(comp);
+    for (const fn of unlockWaiters.splice(0)) fn(ctx, musicBus);
   }
   for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, unlock, { capture: true });
 
@@ -238,6 +244,11 @@
     },
     get muted() {
       return muted;
+    },
+    // For the music engine: call fn(ctx, musicBus) once audio is unlocked.
+    whenReady(fn) {
+      if (ctx) fn(ctx, musicBus);
+      else unlockWaiters.push(fn);
     },
     setMuted(value) {
       muted = !!value;

@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.5.1';
+  const APP_VERSION = '1.6.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -943,6 +943,8 @@
       else toast(`${name(ev.f)} has collapsed`);
     } else if (ev.k === 'nuke') {
       sfx('siren');
+      // Keep the music down from the klaxon until the missile lands.
+      if (window.PixelMusic) window.PixelMusic.duck(NUKE_TIME, 0.15);
       toast(ev.f === myId ? '☢ Nuke launched!' : `☢ ${name(ev.f)} has launched a nuke!`);
     } else if (ev.k === 'msg') {
       toast(ev.text);
@@ -1649,6 +1651,7 @@
     // On a team, your side winning counts even if you were knocked out.
     const won = final && G.winner >= 0 && allied(G.winner, myId);
     sfx(won ? 'victory' : 'defeat');
+    if (window.PixelMusic) window.PixelMusic.stop(1);
     if (!G.recorded) {
       G.recorded = true;
       if (won) {
@@ -2586,6 +2589,50 @@
     $('build-sheet').classList.remove('show');
   }
 
+  // ---------- Music ----------
+  //
+  // The music follows the war: calm on the menu and while expanding, then
+  // bass and drums at war, and everything when you're under attack or a nuke
+  // is in the air. A rise holds for a while so layers don't flicker.
+
+  const MUSIC_HOLD = 8000;
+  let musicAt = 0;
+  let musicLevel = 0.12;
+  let musicHoldUntil = 0;
+
+  function musicTarget() {
+    if (!G || G.demo || G.state === 'spawn') return 0.12;
+    const me = G.factions[myId];
+    if (!me.alive) return 0.12;
+    let v = G.time > 40 ? 0.25 : 0.15;
+    const atWar = G.attacks.some((a) => a.from === myId && a.to >= 0);
+    const underFire = G.attacks.some((a) => a.to === myId)
+      || G.shells.some((sh) => G.owner[sh.to] === myId)
+      || G.boats.some((b) => !allied(b.owner, myId) && G.owner[b.landing] === myId);
+    if (atWar) v = Math.max(v, 0.5);
+    if (underFire) v = Math.max(v, 0.7);
+    if (atWar && underFire) v = Math.max(v, 0.85);
+    if (G.missiles.length) v = 1;
+    return v;
+  }
+
+  function updateMusic(now) {
+    const M = window.PixelMusic;
+    if (!M || now - musicAt < 500) return;
+    musicAt = now;
+    // The music stops at the end of a game; the jingle plays on its own.
+    if (G && (G.state === 'over' || (G.resultStage || 0) > 0)) return;
+    if (!M.playing && !M.muted) M.play();
+    const target = musicTarget();
+    if (target > musicLevel) {
+      musicLevel = target;
+      musicHoldUntil = now + MUSIC_HOLD;
+    } else if (now > musicHoldUntil) {
+      musicLevel = target;
+    }
+    M.setIntensity(musicLevel);
+  }
+
   // ---------- Main loop ----------
 
   function frame(now) {
@@ -2601,6 +2648,7 @@
         if (!G || G.state === 'over') break;
       }
     }
+    updateMusic(now);
     if (net.role === 'host' && now - net.lastSend > 100) {
       net.lastSend = now;
       netBroadcast();
@@ -2724,15 +2772,48 @@
     else if (G && G.state === 'paused') setState(pausedFrom);
   });
 
-  function syncSoundButton() {
-    const off = window.PixelSound && window.PixelSound.muted;
-    $('btn-sound').textContent = off ? '🔇' : '🔊';
-    $('btn-sound').setAttribute('aria-label', off ? 'Sound off' : 'Sound on');
+  // The sound button cycles: music and effects → effects only → silent.
+  const SOUND_MODES = [
+    { icon: '🔊', label: 'Music and sound on', music: true, sfx: true },
+    { icon: '🔉', label: 'Music off, sound effects on', music: false, sfx: true },
+    { icon: '🔇', label: 'All sound off', music: false, sfx: false },
+    // Only reachable from the menu switches; the button moves on to "all on".
+    { icon: '🎵', label: 'Music only', music: true, sfx: false },
+  ];
+
+  function soundMode() {
+    const sfxOn = !(window.PixelSound && window.PixelSound.muted);
+    const musicOn = !(window.PixelMusic && window.PixelMusic.muted);
+    if (sfxOn) return musicOn ? 0 : 1;
+    return musicOn ? 3 : 2;
   }
+
+  function syncSoundButton() {
+    const mode = SOUND_MODES[soundMode()];
+    $('btn-sound').textContent = mode.icon;
+    $('btn-sound').setAttribute('aria-label', mode.label);
+    // The menu's Music / Effects switches show the same settings.
+    $('tg-music').checked = !(window.PixelMusic && window.PixelMusic.muted);
+    $('tg-sfx').checked = !(window.PixelSound && window.PixelSound.muted);
+  }
+
+  $('tg-music').addEventListener('change', (e) => {
+    if (window.PixelMusic) window.PixelMusic.setMuted(!e.target.checked);
+    syncSoundButton();
+  });
+  $('tg-sfx').addEventListener('change', (e) => {
+    if (window.PixelSound) window.PixelSound.setMuted(!e.target.checked);
+    syncSoundButton();
+    sfx('tap');
+  });
   $('btn-sound').addEventListener('click', () => {
     if (!window.PixelSound) return;
-    window.PixelSound.setMuted(!window.PixelSound.muted);
+    const now = soundMode();
+    const mode = SOUND_MODES[now === 3 ? 0 : (now + 1) % 3];
+    window.PixelSound.setMuted(!mode.sfx);
+    if (window.PixelMusic) window.PixelMusic.setMuted(!mode.music);
     syncSoundButton();
+    toast(mode.label);
     sfx('tap');
   });
   syncSoundButton();

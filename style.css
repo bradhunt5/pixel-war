@@ -452,3 +452,31 @@ button.team-b { cursor: pointer; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+.sound-row { display: flex; gap: 24px; }
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 15px; font-weight: 600; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch .track {
+  position: relative;
+  width: 50px;
+  height: 28px;
+  flex: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--panel-edge);
+  transition: background 0.2s;
+}
+.switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s;
+}
+.switch input:checked + .track { background: var(--accent); border-color: var(--accent-hi); }
+.switch input:checked + .track .knob { transform: translateX(22px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent-hi); outline-offset: 2px; }

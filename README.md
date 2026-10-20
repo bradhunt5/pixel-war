@@ -71,9 +71,14 @@ buildings and ownership within its blast radius. The land stays irradiated
 (green) for about 45 seconds, and while it does it costs 4× as many troops
 to take.
 
-**Sound:** the game plays synthesised sound effects for attacks, boats,
-building, upgrades, artillery, nukes and the end of the game. Tap 🔊 at the
-top of the screen to mute them. The setting is remembered.
+**Sound and music:** the game plays synthesised sound effects and an
+adaptive 8-bit chiptune soundtrack, all generated live with no audio files.
+The music is calm on the menu and while you expand. A bassline joins when
+you go to war, drums when you're under fire, and a lead melody when it's
+all-out battle or a nuke is in the air. It ducks under nuclear blasts and
+stops at the end of a game. Tap 🔊 at the top of the screen to cycle
+**music and sound → sound effects only (🔉) → silent (🔇)**. The setting is
+remembered.
 
 The HUD shows troops and troop cap, gold, your share of the land, the clock
 and a leaderboard showing each nation's share of the land and its troops (the
@@ -217,6 +222,7 @@ git push origin v1.2.0
 | `style.css` | Mobile-first styling, including safe-area insets for notched phones |
 | `game.js` | Map generation, simulation, buildings, AI, multiplayer, rendering and touch input |
 | `sound.js` | Sound effects, synthesised with the Web Audio API (no audio files) |
+| `music.js` | Adaptive chiptune music (also synthesised), with war-room and synthwave styles available in code |
 | `localnet.js` | Same-device stand-in for PeerJS (`?localnet`), for testing multiplayer in two tabs |
 | `vendor/peerjs.min.js` | PeerJS 1.5.4 (MIT licence), bundled so the apps don't need a CDN |
 | `maps/world.js`, `maps/europe.js` | Real-world maps: country grids made from Natural Earth data |
@@ -245,5 +251,4 @@ Map data: [Natural Earth](https://www.naturalearthdata.com/) (public domain).
 - A Play Store release (needs a signing key and a developer account).
 - Alliances and peace treaties with AI nations.
 - Warships to intercept enemy boats.
-- Background music.
 - Fully offline LAN play (a QR-code handshake, or a native helper in the APK).
