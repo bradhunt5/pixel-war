@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.1';
+  const APP_VERSION = '1.9.2';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -1050,6 +1050,8 @@
       if (ev.by === myId) toast(`📡 Your SAM shot down ${name(ev.f)}'s ${what}!`);
       else if (ev.f === myId) toast(`📡 Your ${what} was shot down by ${name(ev.by)}`);
       else toast(`📡 ${name(ev.by)} shot down ${name(ev.f)}'s ${what}`);
+    } else if (ev.k === 'planeHome') {
+      if (ev.f === myId) toast(`✈ Your ${ev.kind === 'strike' ? 'bomber' : 'plane'} made it home: ready to fly again`);
     } else if (ev.k === 'planeDown') {
       const what = ev.kind === 'strike' ? 'bomber' : 'paratrooper plane';
       if (ev.f === myId) toast(`📡 Your ${what} was shot down by ${name(ev.by)}!`);
@@ -1060,7 +1062,7 @@
       else if (ev.by === myId) toast(`⚓ You sank ${name(ev.f)}'s ${what}!`);
     } else if (ev.k === 'boatSunk') {
       if (ev.f === myId) toast(`⚓ ${name(ev.by)} sank one of your troop boats!`);
-      else if (ev.by === myId) toast(`⚓ Your battleship sank ${name(ev.f)}'s troop boat`);
+      else if (ev.by === myId) toast(`⚓ Your ${ev.air ? 'bomber' : 'battleship'} sank ${name(ev.f)}'s troop boat`);
     } else if (ev.k === 'crate') {
       if (ev.f !== myId) return;
       sfx('crate');
@@ -1576,18 +1578,19 @@
   // shoot-down is visible. A target is not fired on by more SAMs than it
   // needs hits.
   function samAirDefence() {
-    for (const p of G.planes) if (!p.done) samEngage(p, 'plane', 0.15);
+    for (const p of G.planes) if (!p.done) samEngage(p, 'plane', (k) => planePoint(p, k));
   }
 
   function samDefence() {
     if (!G.missiles.length || !G.factions.some((f) => f.built.sam)) return;
-    for (const m of G.missiles) if (!m.done) samEngage(m, 'missile', 0.45);
+    for (const m of G.missiles) if (!m.done) samEngage(m, 'missile', (k) => flightPoint(m, k, 0.45));
   }
 
-  function samEngage(target, kind, lift) {
+  // `pos(k)` gives the target's drawn position at fraction k of its flight.
+  function samEngage(target, kind, pos) {
     const left = target.dur - target.t;
     if (left <= TICK) return;
-    const at = missileCell(target);
+    const at = pointCell(pos(target.t / target.dur));
     for (const b of G.buildings.values()) {
       if ((target.hp || 1) - (target.inbound || 0) <= 0) return;
       if (b.type !== 'sam' || allied(b.owner, target.owner) || (b.readyAt || 0) > G.time) continue;
@@ -1595,7 +1598,7 @@
       b.readyAt = G.time + SAM_RELOAD[b.level - 1];
       G.bver++;
       target.inbound = (target.inbound || 0) + 1;
-      const { dur, hit } = interceptCourse(b.cell, target, lift);
+      const { dur, hit } = interceptCourse(b.cell, target, pos);
       addFx(b.cell, 1.5, '210,240,255', 350);
       G.interceptors.push({
         owner: b.owner, from: b.cell, hx: hit.x, hy: hit.y, t: 0, dur, target, kind,
@@ -1606,7 +1609,7 @@
   // The earliest point where an interceptor fired from `cell` can meet the
   // target, in whole ticks, always before the target lands. Fast planes
   // are met out towards the edge of the SAM's range rather than overhead.
-  function interceptCourse(cell, target, lift) {
+  function interceptCourse(cell, target, pos) {
     const x0 = cx(cell) + 0.5;
     const y0 = cy(cell) + 0.5;
     const speed = sc(INTERCEPT_SPEED);
@@ -1614,13 +1617,13 @@
     let hit = null;
     let n = 1;
     for (; n <= last; n++) {
-      hit = flightPoint(target, (target.t + n * TICK) / target.dur, lift);
+      hit = pos((target.t + n * TICK) / target.dur);
       let dx = hit.x - x0;
       if (G.wrap) dx -= Math.round(dx / G.gw) * G.gw;
       if (Math.hypot(dx, hit.y - y0) <= speed * n * TICK) break;
     }
     n = Math.min(n, last);
-    if (!hit || n === last) hit = flightPoint(target, (target.t + n * TICK) / target.dur, lift);
+    if (!hit || n === last) hit = pos((target.t + n * TICK) / target.dur);
     return { dur: n * TICK, hit };
   }
 
@@ -1635,6 +1638,40 @@
     return { x: x0 + (x1 - x0) * k, y: y0 + (y1 - y0) * k - h };
   }
 
+  // A plane's drawn position (in cells). Outbound it flies a gentle arc to
+  // the target; on the way home it carries on past the target, banks round
+  // in a curve and then heads for its base.
+  function planePoint(p, k) {
+    if (!p.returning) return flightPoint(p, k, 0.15);
+    const x0 = cx(p.from) + 0.5;
+    const y0 = cy(p.from) + 0.5;
+    const x3 = x0 + ddx(p.to, p.from);
+    const y3 = cy(p.to) + 0.5;
+    const len = Math.hypot(x3 - x0, y3 - y0) || 1;
+    // Outbound heading (away from home), and its right-hand side.
+    const ux = (x0 - x3) / len;
+    const uy = (y0 - y3) / len;
+    const nx = -uy;
+    const ny = ux;
+    const r = clamp(len * 0.3, sc(4), sc(14));
+    const x1 = x0 + ux * r * 1.2 + nx * r * 0.6;
+    const y1 = y0 + uy * r * 1.2 + ny * r * 0.6;
+    const x2 = x0 + ux * r * 0.2 + nx * r * 1.8;
+    const y2 = y0 + uy * r * 0.2 + ny * r * 1.8;
+    const j = 1 - k;
+    const a = j * j * j;
+    const b = 3 * j * j * k;
+    const c = 3 * j * k * k;
+    const d = k * k * k;
+    return { x: a * x0 + b * x1 + c * x2 + d * x3, y: a * y0 + b * y1 + c * y2 + d * y3 };
+  }
+
+  function pointCell(pt) {
+    const x = clamp(wx(Math.floor(pt.x)), 0, G.gw - 1);
+    const y = clamp(Math.floor(pt.y), 0, G.gh - 1);
+    return y * G.gw + x;
+  }
+
   // Interceptors in flight: on arrival they hit their target, if it is still
   // in the air.
   function advanceInterceptors() {
@@ -1647,7 +1684,7 @@
       if (!m) continue;
       m.inbound = Math.max(0, (m.inbound || 0) - 1);
       if (m.done) continue;
-      const at = missileCell(m);
+      const at = pointCell({ x: i.hx, y: i.hy });
       const kill = i.kind === 'plane' || (m.hp || 1) <= 1;
       const size = m.tsar ? (kill ? 8 : 5) : i.kind === 'plane' ? 4 : 5;
       addFx(at, size, '180,220,255', kill ? 1400 : 1000, { x: i.hx, y: i.hy });
@@ -1708,6 +1745,16 @@
     addFx(field.cell, 1.5, '200,200,255', 300);
   }
 
+  const baseRef = (base) => (base.carrier ? { ship: base.carrier.id } : { id: base.id });
+
+  // The airfield or carrier a plane flew from, if it is still its owner's.
+  function homeBase(p) {
+    if (!p.base) return null;
+    if (p.base.ship) return G.ships.find((sh) => sh.id === p.base.ship && sh.owner === p.owner) || null;
+    const b = G.buildings.get(p.base.id);
+    return b && b.owner === p.owner ? b : null;
+  }
+
   function launchPara(f, target, troops) {
     if (target < 0 || G.owner[target] === WATER) return 'Drop on land';
     if (allied(G.owner[target], f.id)) return "That's friendly land";
@@ -1717,19 +1764,37 @@
     if (troops < 2) return 'Not enough troops yet';
     f.troops -= troops;
     useAirbase(base);
-    G.planes.push({ owner: f.id, from: base.cell, to: target, t: 0, dur: PLANE_TIME, troops, kind: 'para' });
+    G.planes.push({ owner: f.id, from: base.cell, to: target, t: 0, dur: PLANE_TIME, troops, kind: 'para', base: baseRef(base) });
     return null;
   }
 
+  // The nearest enemy warship or troop boat within reach of a sea target.
+  function shipTarget(f, cell) {
+    const reach = sc(STRIKE_SPREAD) + 2;
+    let best = null;
+    for (const v of [...G.ships, ...G.boats]) {
+      if (v.dead || v.done || allied(v.owner, f.id)) continue;
+      const d = cellDist(v.cell, cell);
+      if (d <= reach && (!best || d < best.d)) best = { v, d };
+    }
+    return best ? best.v : null;
+  }
+
   function launchStrike(f, target) {
-    if (target < 0 || G.owner[target] === WATER) return 'Aim at land';
-    if (allied(G.owner[target], f.id)) return "That's friendly land";
+    if (target < 0) return 'Aim at land or an enemy ship';
+    const atSea = G.owner[target] === WATER;
+    const vessel = atSea ? shipTarget(f, target) : null;
+    if (atSea && !vessel) return 'Aim at land or an enemy ship';
+    if (!atSea && allied(G.owner[target], f.id)) return "That's friendly land";
     if (f.gold < STRIKE_COST) return `Air strikes cost ${STRIKE_COST} gold`;
     const { base, err } = pickAirbase(f, target);
     if (err) return err;
     f.gold -= STRIKE_COST;
     useAirbase(base);
-    G.planes.push({ owner: f.id, from: base.cell, to: target, t: 0, dur: PLANE_TIME, troops: 0, kind: 'strike' });
+    G.planes.push({
+      owner: f.id, from: base.cell, to: vessel ? vessel.cell : target, t: 0, dur: PLANE_TIME, troops: 0, kind: 'strike',
+      base: baseRef(base), vessel: vessel ? { ship: G.ships.includes(vessel) ? vessel.id : -1, boat: G.boats.includes(vessel) ? vessel.id : -1 } : null,
+    });
     return null;
   }
 
@@ -1875,37 +1940,83 @@
     G.ships = G.ships.filter((sh) => !sh.dead && G.factions[sh.owner].alive);
   }
 
+  // Planes fly out, drop their bombs or paratroopers, then fly home along
+  // the same route (SAMs can still catch them on the way back).
   function advancePlanes() {
     for (const p of G.planes) {
       if (p.done) continue;
       p.t += TICK;
       if (p.t < p.dur) continue;
-      p.done = true;
-      const f = G.factions[p.owner];
-      const o = G.owner[p.to];
-      if (!f.alive) continue;
-      if (p.kind === 'strike') {
-        // Carpet bombing: bombs scattered around the target.
-        const spread = sc(STRIKE_SPREAD);
-        for (let k = 0; k < STRIKE_BOMBS; k++) {
-          const ang = Math.random() * Math.PI * 2;
-          const r = spread * Math.sqrt(Math.random());
-          const x = wx(Math.round(cx(p.to) + Math.cos(ang) * r));
-          const y = clamp(Math.round(cy(p.to) + Math.sin(ang) * r), 0, G.gh - 1);
-          if (x < 0 || x >= G.gw) continue;
-          shellImpact({ to: y * G.gw + x, owner: p.owner, blast: Math.max(1, Math.round(sc(1))) });
+      if (p.returning) {
+        p.done = true;
+        // Getting home safely readies the base to fly again straight away.
+        const home = homeBase(p);
+        if (home && (home.readyAt || 0) > G.time) {
+          home.readyAt = G.time;
+          G.bver++;
+          announce({ k: 'planeHome', f: p.owner, kind: p.kind });
         }
         continue;
       }
-      if (o === WATER || allied(o, p.owner) || !capture(p.to, f, p)) {
-        f.troops += Math.max(0, p.troops);
-        continue;
-      }
-      addFx(p.to, 2, '230,230,255', 400);
-      if (p.troops >= 1 && (o < 0 || G.factions[o].alive)) addAttack(p.owner, o, p.troops, cx(p.to), cy(p.to));
-      else f.troops += Math.max(0, p.troops);
+      dropPayload(p);
+      p.returning = true;
+      p.troops = 0;
+      // Head for where the base is now (a carrier may have sailed on).
+      const home = homeBase(p);
+      [p.from, p.to] = [p.to, home ? home.cell : p.from];
+      p.t = 0;
     }
     G.planes = G.planes.filter((p) => !p.done);
+  }
+
+  // A bomb landing among ships: warships take a hit, troop boats sink.
+  function bombShipping(cell, owner) {
+    const r = sc(1.5);
+    for (const sh of G.ships) {
+      if (!sh.dead && !allied(sh.owner, owner) && cellDist(sh.cell, cell) <= r) damageShip(sh, owner);
+    }
+    for (const b of G.boats) {
+      if (b.done || allied(b.owner, owner) || cellDist(b.cell, cell) > r) continue;
+      b.done = true;
+      addFx(b.cell, 3, '255,170,60', 600);
+      announce({ k: 'boatSunk', f: b.owner, by: owner, air: true });
+    }
+  }
+
+  function dropPayload(p) {
+    const f = G.factions[p.owner];
+    const o = G.owner[p.to];
+    if (!f.alive) return;
+    if (p.kind === 'strike') {
+      // Carpet bombing: bombs scattered around the target. Against shipping
+      // the bomber follows its target and drops in a tighter pattern.
+      let at = p.to;
+      let spread = sc(STRIKE_SPREAD);
+      if (p.vessel) {
+        const v = G.ships.find((sh) => sh.id === p.vessel.ship && !sh.dead)
+          || G.boats.find((b) => b.id === p.vessel.boat && !b.done);
+        if (v) at = v.cell;
+        spread /= 2;
+      }
+      for (let k = 0; k < STRIKE_BOMBS; k++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = spread * Math.sqrt(Math.random());
+        const x = wx(Math.round(cx(at) + Math.cos(ang) * r));
+        const y = clamp(Math.round(cy(at) + Math.sin(ang) * r), 0, G.gh - 1);
+        if (x < 0 || x >= G.gw) continue;
+        const cell = y * G.gw + x;
+        shellImpact({ to: cell, owner: p.owner, blast: Math.max(1, Math.round(sc(1))) });
+        bombShipping(cell, p.owner);
+      }
+      return;
+    }
+    if (o === WATER || allied(o, p.owner) || !capture(p.to, f, p)) {
+      f.troops += Math.max(0, p.troops);
+      return;
+    }
+    addFx(p.to, 2, '230,230,255', 400);
+    if (p.troops >= 1 && (o < 0 || G.factions[o].alive)) addAttack(p.owner, o, p.troops, cx(p.to), cy(p.to));
+    else f.troops += Math.max(0, p.troops);
   }
 
   // Supply drops: crates appear on unclaimed land; whoever captures the
@@ -3186,8 +3297,12 @@
     const u = clamp(view.cell * 0.5, 1.6 * view.dpr, 3 * view.dpr);
     for (const p of G.planes) {
       const t = Math.min(1, (p.t + acc) / p.dur);
-      const a = arcPoint(p.from, p.to, t, 0.15);
-      const b = arcPoint(p.from, p.to, Math.min(1, t + 0.02), 0.15);
+      const pa = planePoint(p, t);
+      const pb = planePoint(p, Math.min(1, t + 0.02));
+      // Facing along the path (the last moment of a leg looks back a little).
+      const pc = t + 0.02 > 1 ? planePoint(p, t - 0.02) : null;
+      const a = { x: sx(pa.x), y: sy(pa.y) };
+      const b = pc ? { x: 2 * a.x - sx(pc.x), y: 2 * a.y - sy(pc.y) } : { x: sx(pb.x), y: sy(pb.y) };
       if (!onScreen(a.x, a.y, 20 * u)) continue;
       // Bombers are bigger and dark, with the owner's colour as a trim.
       const bomber = p.kind === 'strike';
@@ -3703,7 +3818,7 @@
       $('build-list').innerHTML = `<button data-air="para"><span class="bi">🪂</span><span class="bt"><b>Paradrop</b>`
         + `<small>Drop ${settings.pct}% of your troops on land in range</small></span><span class="bc">Free</span></button>`
         + `<button data-air="strike" ${me.gold < STRIKE_COST ? 'disabled' : ''}><span class="bi">💣</span><span class="bt"><b>Air strike</b>`
-        + `<small>Carpet-bomb an area: kills troops, wrecks buildings</small></span><span class="bc">${STRIKE_COST}g</span></button>`
+        + `<small>Carpet-bomb an area or enemy ships: kills troops, wrecks buildings, sinks boats</small></span><span class="bc">${STRIKE_COST}g</span></button>`
         + '<p class="now">Both use a ready airfield or carrier in range. SAM sites can shoot planes down.</p>';
       return;
     }
@@ -4606,7 +4721,7 @@
       boats: G.boats.map((b) => [b.id, b.owner, Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, Math.round(b.troops)]),
       shells: G.shells.map((s) => [s.from, s.to, s.t, s.dur]),
       missiles: G.missiles.map((m) => [m.from, m.to, m.t, m.dur, m.radius, m.tsar ? 1 : 0]),
-      planes: G.planes.map((p) => [p.owner, p.from, p.to, p.t, p.dur, p.kind === 'strike' ? 1 : 0]),
+      planes: G.planes.map((p) => [p.owner, p.from, p.to, p.t, p.dur, p.kind === 'strike' ? 1 : 0, p.returning ? 1 : 0]),
       interceptors: G.interceptors.map((i) => [i.owner, i.from, Math.round(i.hx * 10) / 10, Math.round(i.hy * 10) / 10, i.t, i.dur]),
       ships: G.ships.map((sh) => [sh.id, sh.owner, sh.type, Math.round(sh.x * 10) / 10, Math.round(sh.y * 10) / 10,
         Math.round((sh.angle || 0) * 100) / 100, sh.hp, sh.readyAt || 0, sh.voyage ? sh.voyage.end : -1]),
@@ -4918,7 +5033,9 @@
     });
     G.shells = s.shells.map(([from, to, t, dur]) => ({ from, to, t, dur }));
     G.missiles = s.missiles.map(([from, to, t, dur, radius, tsar]) => ({ from, to, t, dur, radius, tsar: !!tsar }));
-    G.planes = (s.planes || []).map(([owner, from, to, t, dur, strike]) => ({ owner, from, to, t, dur, kind: strike ? 'strike' : 'para' }));
+    G.planes = (s.planes || []).map(([owner, from, to, t, dur, strike, returning]) => ({
+      owner, from, to, t, dur, kind: strike ? 'strike' : 'para', returning: !!returning,
+    }));
     G.interceptors = (s.interceptors || []).map(([owner, from, hx, hy, t, dur]) => ({ owner, from, hx, hy, t, dur }));
     // Joiners draw each ship heading for its next cell, with its destination.
     const oldShips = new Map(G.ships.map((sh) => [sh.id, sh]));

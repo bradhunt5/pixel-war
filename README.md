@@ -77,8 +77,13 @@ artillery hit.
   - **🪂 Paradrop:** your Send % of troops fly to any non-allied land in
     range, land and push inland.
   - **💣 Air strike (300g):** a bomber carpet-bombs the area with 6 bombs,
-    killing troops, wrecking buildings and knocking out land.
-  Dashed circles show each airfield's reach. Both share the base's reload. Your Send % of troops fly there, land and push inland.
+    killing troops, wrecking buildings and knocking out land. Aim at an enemy
+    warship or troop boat and the bomber follows it and bombs it at sea:
+    each hit costs a warship one hit point, and troop boats sink.
+  Dashed circles show each airfield's reach. Both share the base's reload.
+  After the drop the plane banks round and flies home; if it makes it back
+  without being shot down, its airfield or carrier is ready to fly again
+  straight away.
 - **⚔️ Barracks:** the best one you own makes every attack (by land, boat
   or air) cheaper.
 - **📦 Supply drops:** crates appear on unclaimed land every 30–50 seconds
