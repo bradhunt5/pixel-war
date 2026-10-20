@@ -34,6 +34,7 @@
       <span id="clock" class="v">0:00</span>
     </div>
     <div class="hud-buttons">
+      <button id="btn-sound" class="icon-btn" aria-label="Sound on">🔊</button>
       <button id="btn-speed" class="icon-btn" aria-label="Game speed">1×</button>
       <button id="btn-pause" class="icon-btn" aria-label="Pause">❚❚</button>
     </div>
@@ -84,13 +85,19 @@
       </div>
 
       <div class="field">
-        <span class="field-label">Opponents</span>
+        <span class="field-label">AI opponents (single player)</span>
         <div class="seg" id="seg-opp">
+          <button data-v="1">1</button>
           <button data-v="2">2</button>
           <button data-v="3">3</button>
           <button data-v="4">4</button>
           <button data-v="5">5</button>
         </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Your colour</span>
+        <div class="swatches" id="colour-pick"></div>
       </div>
 
       <div class="field">
@@ -138,8 +145,14 @@
       <h2>Multiplayer</h2>
       <p id="lobby-status" class="tag"></p>
       <div class="room">Room code<span id="lobby-code" class="code">····</span></div>
+      <p id="lobby-info" class="tag small"></p>
       <ol id="lobby-players" class="players"></ol>
+      <div class="field">
+        <span class="field-label">Your colour</span>
+        <div class="swatches" id="lobby-colours"></div>
+      </div>
       <p id="lobby-note" class="tag small"></p>
+      <button id="btn-ready" class="primary hidden">Ready</button>
       <button id="btn-start" class="primary" disabled>Start game</button>
       <button id="btn-leave" class="secondary">Leave</button>
     </div>
@@ -170,6 +183,7 @@
   <script src="localnet.js"></script>
   <script src="maps/world.js"></script>
   <script src="maps/europe.js"></script>
+  <script src="sound.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

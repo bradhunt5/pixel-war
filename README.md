@@ -8,7 +8,7 @@ Windows app, and up to six players can play together on any mix of devices.
 ## How to play
 
 1. Choose a map (**World**, **Europe** or **Random** islands), the number of
-   opponents (2–5) and a difficulty, then press **Play**.
+   AI opponents (1–5), your colour and a difficulty, then press **Play**.
 2. On World or Europe, **tap a country** to lead it. You start with the part
    of it around where you tapped. On Random, tap anywhere to place your
    capital. **Random** picks for you.
@@ -64,6 +64,10 @@ buildings and ownership within its blast radius. The land stays irradiated
 (green) for about 45 seconds, and while it does it costs 4× as many troops
 to take.
 
+**Sound:** the game plays synthesised sound effects for attacks, boats,
+building, upgrades, artillery, nukes and the end of the game. Tap 🔊 at the
+top of the screen to mute them. The setting is remembered.
+
 The HUD shows troops and troop cap, gold, your share of the land, the clock
 and a leaderboard. The bottom line lists your attacks and boats in progress,
 or warns you about incoming attacks. **1× / 2× / 3×** changes the game speed
@@ -75,24 +79,33 @@ nuke, and otherwise pauses the game instead of leaving it.
 Each rival gets a personality. Every game includes a **Warlord** (very
 aggressive), a **Balanced** rival and a **Turtle** (saves up, expands slowly).
 With four or five opponents, a **Raider** and a **Settler** join in.
-Difficulty changes how fast rivals earn troops and gold (Easy ×0.8, Normal
-×1.0, Hard ×1.2), how aggressive they are, and how keen they are to target
-you. AI nations build and upgrade mines, cities, forts and artillery, and send
+Difficulty changes how fast rivals earn troops and gold (Easy ×0.64, Normal
+×0.8, Hard ×0.96 of a human player's rate), how aggressive they are, and how
+keen they are to target you. AI nations build and upgrade mines, cities, forts and artillery, and send
 boats overseas. On Normal the more aggressive ones build nuclear silos. On Hard
 most of them do. On Easy, no AI builds a silo.
 
 ## Multiplayer
 
 Up to six players can share one war, on any mix of browsers, the Android
-app and the Windows app. Any slots left over go to AI nations.
+app and the Windows app. The lobby shows all six nation slots. Empty slots
+are AI nations by default, and the host taps a slot to switch its AI on or
+off (switch them all off for humans only). Each new player takes the next
+slot. Your menu colour is your first choice, and you can change it in the
+lobby.
 
 1. Everyone types a name under **Multiplayer** on the main menu.
-2. One person picks the map, the number of AI opponents and the difficulty,
-   then taps **Host game**. A four-letter room code appears.
-3. Everyone else types the code and taps **Join**. The host sees each player
-   arrive in the room.
-4. The host taps **Start game**. Everyone picks a country (or a spot on
-   Random maps). The war starts once everyone has chosen.
+2. One person picks the map and difficulty, then taps **Host game**. A
+   four-letter room code appears.
+3. Everyone else types the code and taps **Join**.
+4. In the lobby, each player taps a colour (taken colours are greyed out),
+   and joiners tap **Ready**. The host switches AI slots on or off.
+5. The host taps **Start game** once everyone is ready. If someone isn't,
+   the host taps **Waiting for players** to give everyone 20 seconds (shown
+   on every screen). When that runs out, the host can **Start anyway**. Anyone still not ready stays in
+   the game with a random starting spot.
+6. Everyone picks a country (or a spot on Random maps). The war starts once
+   everyone has chosen.
 
 How it works: a free public PeerJS server introduces the devices, so the
 host and each joiner need an internet connection when they first connect.
@@ -187,6 +200,7 @@ git push origin v1.2.0
 | `index.html` | Page layout: HUD, menus, overlays |
 | `style.css` | Mobile-first styling, including safe-area insets for notched phones |
 | `game.js` | Map generation, simulation, buildings, AI, multiplayer, rendering and touch input |
+| `sound.js` | Sound effects, synthesised with the Web Audio API (no audio files) |
 | `localnet.js` | Same-device stand-in for PeerJS (`?localnet`), for testing multiplayer in two tabs |
 | `vendor/peerjs.min.js` | PeerJS 1.5.4 (MIT licence), bundled so the apps don't need a CDN |
 | `maps/world.js`, `maps/europe.js` | Real-world maps: country grids made from Natural Earth data |
@@ -215,5 +229,5 @@ Map data: [Natural Earth](https://www.naturalearthdata.com/) (public domain).
 - A Play Store release (needs a signing key and a developer account).
 - Alliances and peace treaties with AI nations.
 - Warships to intercept enemy boats.
-- Sound effects and music.
+- Background music.
 - Fully offline LAN play (a QR-code handshake, or a native helper in the APK).

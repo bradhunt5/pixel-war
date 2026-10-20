@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -58,14 +58,34 @@
   const WATER_RGB = [22, 58, 104];
   const RAD_RGB = [120, 255, 70];
 
-  const FACTIONS = [
-    { name: 'You', color: [59, 130, 246] },
-    { name: 'Crimson', color: [220, 38, 38] },
-    { name: 'Amber', color: [234, 150, 12] },
-    { name: 'Jade', color: [16, 170, 110] },
-    { name: 'Violet', color: [139, 92, 246] },
-    { name: 'Rose', color: [226, 72, 153] },
+  // Colours players can pick; AI nations take whatever is left. On random
+  // maps an AI is named after its colour.
+  const COLOURS = [
+    { name: 'Blue', rgb: [59, 130, 246] },
+    { name: 'Crimson', rgb: [220, 38, 38] },
+    { name: 'Amber', rgb: [234, 150, 12] },
+    { name: 'Jade', rgb: [16, 170, 110] },
+    { name: 'Violet', rgb: [139, 92, 246] },
+    { name: 'Rose', rgb: [226, 72, 153] },
+    { name: 'Teal', rgb: [20, 184, 166] },
+    { name: 'Lime', rgb: [132, 204, 22] },
+    { name: 'White', rgb: [236, 238, 242] },
+    { name: 'Bronze', rgb: [150, 98, 52] },
   ];
+  const MAX_FACTIONS = 6;
+  const colourCss = (k) => `rgb(${COLOURS[k].rgb.join(',')})`;
+
+  // Give each human their chosen colour unless someone earlier has it, in
+  // which case they get the next free one.
+  function resolveColours(wanted) {
+    const used = new Set();
+    return wanted.map((w) => {
+      let k = Number.isInteger(w) && COLOURS[w] ? w : 0;
+      while (used.has(k)) k = (k + 1) % COLOURS.length;
+      used.add(k);
+      return k;
+    });
+  }
 
   // The first three personalities are always in play, so even a two- or
   // three-opponent game has a spread of aggression.
@@ -80,10 +100,12 @@
   ];
 
   // siloAggr: minimum aggression for an AI to build nukes (Infinity = never).
+  // AI nations' troop and gold income, aggression and how keen they are to
+  // pick on human players (eased by about 20% after play-testing).
   const DIFFICULTY = {
-    easy: { income: 0.8, aggr: -0.15, playerBias: 0.8, siloAggr: Infinity },
-    normal: { income: 1.0, aggr: 0, playerBias: 1.0, siloAggr: 0.6 },
-    hard: { income: 1.2, aggr: 0.15, playerBias: 1.3, siloAggr: 0.4 },
+    easy: { income: 0.64, aggr: -0.25, playerBias: 0.65, siloAggr: Infinity },
+    normal: { income: 0.8, aggr: -0.1, playerBias: 0.8, siloAggr: 0.65 },
+    hard: { income: 0.96, aggr: 0.05, playerBias: 1.05, siloAggr: 0.45 },
   };
 
   // stats(level) describes what a building does at a given level (1-3).
@@ -137,8 +159,9 @@
     },
   };
 
-  const settings = Object.assign({ opponents: 3, difficulty: 'normal', pct: 50, map: 'world' },
+  const settings = Object.assign({ opponents: 3, difficulty: 'normal', pct: 50, map: 'world', colour: 0 },
     store.get('settings', {}));
+  if (!(settings.opponents >= 1)) settings.opponents = 1;
   const record = Object.assign({ wins: 0, losses: 0, fastest: null }, store.get('record', {}));
 
   // ---------- State ----------
@@ -148,6 +171,7 @@
   let acc = 0;
   let last = performance.now();
   let hudTimer = 0;
+  let shakeUntil = 0;             // screen shake after a nuclear blast
   let pausedFrom = 'play';
   let myId = 0;                   // which faction this device controls
 
@@ -189,6 +213,7 @@
   }
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const sfx = (name, opts) => window.PixelSound && window.PixelSound.play(name, opts);
   const cx = (i) => i % G.gw;
   const cy = (i) => (i / G.gw) | 0;
   // East-west offset from cell b to cell a; the World map wraps round.
@@ -481,12 +506,13 @@
   }
 
   function makeFaction(id, opts) {
-    const c = FACTIONS[id].color;
+    const colour = opts.colour;
+    const c = COLOURS[colour].rgb;
     return Object.assign({
       id,
       isPlayer: false,
       player: null,
-      name: FACTIONS[id].name,
+      name: COLOURS[colour].name,
       color: c,
       border: c.map((v) => v * 0.55),
       css: `rgb(${c.join(',')})`,
@@ -509,13 +535,14 @@
     }, opts);
   }
 
-  // humans: names of the human players (single player: just 'You').
-  function newGame(demo, humans) {
+  // humans: [{ name, colour }] for the human players (single player: just you).
+  // aiCount: number of AI nations (defaults to the menu's single-player setting).
+  function newGame(demo, humans, aiCount) {
     $('over').classList.remove('show');
     closeBuildSheet();
     acc = 0;
     setState(demo ? 'menu' : 'spawn');
-    humans = demo ? [] : humans || ['You'];
+    humans = demo ? [] : humans || [{ name: 'You', colour: settings.colour }];
     const kind = demo ? 'random' : settings.map;
     const rec = kind !== 'random' && window.PIXEL_WAR_MAPS ? window.PIXEL_WAR_MAPS[kind] : null;
     let gw;
@@ -534,15 +561,21 @@
     G.mp = humans.length > 1;
     G.track = !demo && net.role === 'host';
 
-    const ais = demo ? FACTIONS.length : Math.min(settings.opponents, FACTIONS.length - humans.length);
+    const ais = demo ? MAX_FACTIONS
+      : Math.min(aiCount === undefined ? settings.opponents : aiCount, MAX_FACTIONS - humans.length);
     const count = humans.length + ais;
+    const humanColours = resolveColours(humans.map((h) => h.colour));
+    const aiColours = COLOURS.map((_, k) => k).filter((k) => !humanColours.includes(k));
     const personas = shuffle(CORE_PERSONAS.slice(), rng).concat(shuffle(EXTRA_PERSONAS.slice(), rng));
     for (let id = 0; id < count; id++) {
       if (id < humans.length) {
-        G.factions.push(makeFaction(id, { isPlayer: true, player: humans[id], name: G.mp ? humans[id] : 'You' }));
+        G.factions.push(makeFaction(id, {
+          isPlayer: true, player: humans[id].name, name: G.mp ? humans[id].name : 'You', colour: humanColours[id],
+        }));
       } else {
         const persona = personas[(id - humans.length) % personas.length];
         G.factions.push(makeFaction(id, {
+          colour: aiColours[id - humans.length],
           persona: persona.label,
           aggr: clamp(persona.aggr + diff.aggr, 0.05, 1),
           income: demo ? 1 : diff.income,
@@ -870,10 +903,12 @@
     const name = (id) => G.factions[id].name;
     if (ev.k === 'elim') {
       if (ev.f === myId) return; // Our own defeat gets the results screen.
+      sfx('fallen');
       if (ev.by === myId) toast(`You crushed ${name(ev.f)}!`);
       else if (ev.by >= 0) toast(`${name(ev.f)} has fallen to ${name(ev.by)}`);
       else toast(`${name(ev.f)} has collapsed`);
     } else if (ev.k === 'nuke') {
+      sfx('siren');
       toast(ev.f === myId ? '☢ Nuke launched!' : `☢ ${name(ev.f)} has launched a nuke!`);
     } else if (ev.k === 'msg') {
       toast(ev.text);
@@ -1189,6 +1224,7 @@
         continue;
       }
       b.reload = ART_RELOAD[b.level - 1];
+      addFx(b.cell, 1.2, '255,230,150', 220); // muzzle flash (and the bang)
       G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME, blast: Math.round(sc(ART_BLAST[b.level - 1])) });
     }
   }
@@ -1307,6 +1343,21 @@
 
   function addFx(cell, radius, rgb, dur) {
     if (G.track) G.fxEvents.push([cell, radius, rgb, dur]);
+    if (!G.demo) {
+      if (rgb === '255,240,200') {
+        // A nuke is a world event: always full volume. Only the screen shake
+        // depends on how close it is.
+        sfx('nuke');
+        const near = hearing(cell).vol;
+        if (near > 0.5) shakeUntil = performance.now() + 1100 * near;
+      } else if (rgb === '255,200,90') {
+        worldSfx('shell', cell);
+      } else if (rgb === '255,230,150') {
+        worldSfx('cannon', cell);
+      } else if (rgb === '255,170,60') {
+        worldSfx('blast', cell);
+      }
+    }
     G.fx.push({ x: cx(cell) + 0.5, y: cy(cell) + 0.5, radius, rgb, start: performance.now(), dur });
   }
 
@@ -1552,6 +1603,7 @@
     updateBanner();
     const me = G.factions[myId];
     const won = final && G.winner === myId;
+    sfx(won ? 'victory' : 'defeat');
     if (!G.recorded) {
       G.recorded = true;
       if (won) {
@@ -1674,6 +1726,12 @@
     const done = (res) => {
       if (res.msg) toast(res.msg);
       if (res.ok) buzz();
+      if (res.ok) {
+        const sounds = { attack: res.msg ? 'boat' : 'attack', build: 'build', upgrade: 'upgrade', spawn: 'spawn' };
+        if (sounds[act.a]) sfx(sounds[act.a]);
+      } else if (res.msg) {
+        sfx('error');
+      }
       if (after) after(res);
     };
     if (net.role === 'client') netRequest(act, done);
@@ -2070,6 +2128,39 @@
     }
   }
 
+  // Play a sound that happens somewhere on the map. Returns the volume used
+  // (0 if too far away to hear).
+  function worldSfx(name, cell) {
+    const { vol, pan } = hearing(cell);
+    if (vol < 0.04) return 0;
+    sfx(name, { vol, pan });
+    return vol;
+  }
+
+  // How loud a map event at this cell sounds, and from which side: full
+  // volume on screen, fading with distance off screen, and quieter the
+  // further the view is zoomed out (as if heard from high above).
+  function hearing(cell) {
+    if (!view.area || !view.cell) return { vol: 0, pan: 0 };
+    const w = canvas.width;
+    const h = canvas.height;
+    const y = sy(cy(cell) + 0.5);
+    // The nearest copy of the cell, on wrapping maps.
+    let x = sx(cx(cell) + 0.5);
+    for (const c of copies(x, w)) if (Math.abs(c - w / 2) < Math.abs(x - w / 2)) x = c;
+    const dx = x - w / 2;
+    const dy = y - h / 2;
+    const outside = Math.hypot(Math.max(0, Math.abs(dx) - w / 2), Math.max(0, Math.abs(dy) - h / 2));
+    const half = Math.min(w, h) / 2;
+    const distance = 1 / (1 + outside / half) ** 2;
+    // 25% fully zoomed out, rising smoothly to full volume once cells are
+    // about 8 screen pixels wide (or 2.5× the zoomed-out size).
+    const close = Math.max(8 * view.dpr, view.minCell * 2.5);
+    const t = clamp(Math.log(view.cell / view.minCell) / Math.log(close / view.minCell), 0, 1);
+    const zoom = 0.25 + 0.75 * t;
+    return { vol: distance * zoom, pan: clamp(dx / (w / 2), -1, 1) * 0.7 };
+  }
+
   function centroid(f) {
     let gx = f.sx / f.cells;
     if (G.wrap) {
@@ -2206,9 +2297,16 @@
   }
 
   function render(now) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07101d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!G) return;
+    if (now < shakeUntil) {
+      // The shake fades out over about a second.
+      const k = (shakeUntil - now) / 1100;
+      const m = 14 * view.dpr * k * k;
+      ctx.translate((Math.random() * 2 - 1) * m, (Math.random() * 2 - 1) * m);
+    }
     drawMap();
     G.fx = G.fx.filter((f) => now - f.start < f.dur);
     for (const origin of copies(view.mapX, G.gw * view.cell)) {
@@ -2384,7 +2482,10 @@
   // ---------- Menus and controls ----------
 
   function syncMenu() {
-    const segs = { 'seg-opp': String(settings.opponents), 'seg-diff': settings.difficulty, 'seg-map': settings.map };
+    const segs = {
+      'seg-opp': String(settings.opponents), 'seg-diff': settings.difficulty, 'seg-map': settings.map,
+      'colour-pick': String(settings.colour),
+    };
     for (const [id, value] of Object.entries(segs)) {
       for (const b of document.querySelectorAll(`#${id} button`)) b.classList.toggle('on', b.dataset.v === value);
     }
@@ -2409,6 +2510,9 @@
     });
   }
   bindSeg('seg-opp', 'opponents', Number);
+  $('colour-pick').innerHTML = COLOURS.map((c, k) =>
+    `<button data-v="${k}" style="background:${colourCss(k)}" aria-label="${c.name}" title="${c.name}"></button>`).join('');
+  bindSeg('colour-pick', 'colour', Number);
   bindSeg('seg-diff', 'difficulty', String);
   bindSeg('seg-map', 'map', String);
 
@@ -2487,6 +2591,19 @@
     else if (G && G.state === 'paused') setState(pausedFrom);
   });
 
+  function syncSoundButton() {
+    const off = window.PixelSound && window.PixelSound.muted;
+    $('btn-sound').textContent = off ? '🔇' : '🔊';
+    $('btn-sound').setAttribute('aria-label', off ? 'Sound off' : 'Sound on');
+  }
+  $('btn-sound').addEventListener('click', () => {
+    if (!window.PixelSound) return;
+    window.PixelSound.setMuted(!window.PixelSound.muted);
+    syncSoundButton();
+    sfx('tap');
+  });
+  syncSoundButton();
+
   $('btn-speed').addEventListener('click', () => {
     speed = speed >= 3 ? 1 : speed + 1;
     $('btn-speed').textContent = speed + '×';
@@ -2560,29 +2677,176 @@
     $('lobby-status').textContent = status || '';
     $('lobby-code').textContent = net.code || '····';
     $('btn-start').classList.toggle('hidden', net.role !== 'host');
+    $('btn-ready').classList.toggle('hidden', net.role !== 'client');
     $('lobby-note').textContent = net.role === 'host'
       ? 'Friends open Pixel War on any device (browser, Android or Windows), tap Join and enter this code. '
-        + 'The map, AI opponents and difficulty come from your menu settings.'
-      : 'Waiting for the host to start the game…';
+        + 'Tap an AI slot to switch it on or off. The map and difficulty come from your menu settings.'
+      : 'Pick a colour, then tap Ready. The host starts the game once everyone is ready.';
   }
 
-  function renderLobby(players) {
+  // The lobby shows all MAX_FACTIONS nation slots: the humans first, then
+  // AI slots the host can switch on or off.
+  // players: [{ name, colour, ready }]; you: this device's entry;
+  // countdown: seconds until a forced start, or null; aiOn: per-slot flags.
+  function renderLobby(players, you, countdown, force, aiOn, info) {
+    const lobbyForce = net.role === 'host' ? net.forceAllowed : force;
+    net.lobby = players;
+    net.you = you;
     $('lobby-code').textContent = net.code;
-    $('lobby-players').innerHTML = players.map((p, k) =>
-      `<li><span class="sw" style="background:${FACTIONS[k].css || `rgb(${FACTIONS[k].color.join(',')})`}"></span>${p}${k === 0 ? ' (host)' : ''}</li>`).join('');
-    $('btn-start').disabled = players.length < 2;
-    $('lobby-status').textContent = `${players.length} player${players.length > 1 ? 's' : ''} in the room`;
+    $('lobby-info').textContent = info || '';
+    const leftover = COLOURS.map((_, k) => k).filter((k) => !players.some((p) => p.colour === k));
+    let nextAi = 0;
+    const rows = [];
+    for (let slot = 0; slot < MAX_FACTIONS; slot++) {
+      const p = players[slot];
+      if (p) {
+        const status = slot === 0 ? 'Host' : p.ready ? '✓ Ready' : 'Not ready';
+        rows.push(`<li class="${slot === you ? 'me' : ''}"><span class="sw" style="background:${colourCss(p.colour)}"></span>`
+          + `<span class="pn">${p.name}</span><span class="ps ${p.ready || slot === 0 ? 'ok' : ''}">${status}</span></li>`);
+      } else if (aiOn[slot]) {
+        const colour = leftover[nextAi++];
+        rows.push(`<li class="ai ${you === 0 ? 'tog' : ''}" data-slot="${slot}"><span class="sw" style="background:${colourCss(colour)}"></span>`
+          + `<span class="pn">AI nation</span><span class="ps on">${you === 0 ? 'AI on' : 'AI'}</span></li>`);
+      } else {
+        rows.push(`<li class="off ${you === 0 ? 'tog' : ''}" data-slot="${slot}"><span class="sw empty"></span>`
+          + `<span class="pn">Empty</span><span class="ps">${you === 0 ? 'AI off' : 'Empty'}</span></li>`);
+      }
+    }
+    $('lobby-players').innerHTML = rows.join('');
+    const taken = players.map((p, k) => (k === you ? -1 : p.colour));
+    $('lobby-colours').innerHTML = COLOURS.map((c, k) => {
+      const mine = players[you] && players[you].colour === k;
+      return `<button data-v="${k}" class="${mine ? 'on' : ''}" style="background:${colourCss(k)}" `
+        + `${taken.includes(k) ? 'disabled' : ''} aria-label="${c.name}" title="${c.name}"></button>`;
+    }).join('');
+    const joiners = players.slice(1);
+    const allReady = joiners.length > 0 && joiners.every((p) => p.ready);
+    $('btn-start').disabled = !joiners.length;
+    const readyCount = `${joiners.filter((p) => p.ready).length}/${joiners.length} ready`;
+    if (countdown != null) $('btn-start').textContent = `Waiting for players… ${countdown}s`;
+    else if (allReady || !joiners.length) $('btn-start').textContent = 'Start game';
+    else $('btn-start').textContent = net.forceAllowed ? 'Start anyway' : `Waiting for players (${readyCount})`;
+    const meReady = players[you] && players[you].ready;
+    $('btn-ready').textContent = meReady ? 'Not ready' : 'Ready';
+    $('btn-ready').classList.toggle('primary', !meReady);
+    $('btn-ready').classList.toggle('secondary', !!meReady);
+    const ready = joiners.filter((p) => p.ready).length;
+    if (countdown != null) {
+      $('lobby-status').textContent = you === 0 ? `Giving everyone ${countdown}s to get ready (tap again to stop)`
+        : `The host is waiting to start: ${countdown}s${meReady ? '' : '. Tap Ready!'}`;
+    } else if (lobbyForce && !allReady) {
+      $('lobby-status').textContent = you === 0 ? `${ready} of ${joiners.length} ready. You can start anyway`
+        : `The host can start now${meReady ? '' : '. Tap Ready!'}`;
+    } else if (you === 0 && joiners.length && !allReady) {
+      $('lobby-status').textContent = 'Tap below to give everyone 20 seconds to get ready';
+    } else {
+      const ais = aiOn.slice(players.length).filter(Boolean).length;
+      $('lobby-status').textContent = `${players.length} player${players.length > 1 ? 's' : ''} and ${ais} AI nation${ais === 1 ? '' : 's'}`;
+    }
   }
+
+  const MAP_NAMES = { world: 'World', europe: 'Europe', random: 'Random' };
+  const lobbyInfo = () => `${MAP_NAMES[settings.map] || 'Random'} map · `
+    + `${settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1)} AI`;
+
+  // Host taps an AI or empty slot to switch the AI on or off.
+  $('lobby-players').addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-slot]');
+    if (!li || net.role !== 'host') return;
+    const slot = Number(li.dataset.slot);
+    net.aiOn[slot] = !net.aiOn[slot];
+    sfx('tap');
+    lobbyBroadcast();
+  });
 
   function lobbyPlayers() {
-    return [playerName()].concat([...net.conns.values()].map((p) => p.name));
+    return [{ name: playerName(), colour: net.hostColour, ready: true }]
+      .concat([...net.conns.values()].map((p) => ({ name: p.name, colour: p.colour, ready: !!p.ready })));
+  }
+
+  // Is colour k free for the player with this peer id (null = the host)?
+  function colourFree(k, peerId) {
+    if (!Number.isInteger(k) || !COLOURS[k]) return false;
+    if (peerId !== null && net.hostColour === k) return false;
+    for (const [id, p] of net.conns) if (id !== peerId && p.colour === k) return false;
+    return true;
   }
 
   function lobbyBroadcast() {
     const players = lobbyPlayers();
-    renderLobby(players);
-    for (const p of net.conns.values()) if (p.conn.open) p.conn.send({ t: 'lobby', code: net.code, players });
+    const countdown = net.countdownEnd ? Math.max(0, Math.ceil((net.countdownEnd - Date.now()) / 1000)) : null;
+    const info = lobbyInfo();
+    renderLobby(players, 0, countdown, net.forceAllowed, net.aiOn, info);
+    let k = 1;
+    for (const p of net.conns.values()) {
+      if (p.conn.open) {
+        p.conn.send({ t: 'lobby', code: net.code, players, you: k, countdown, force: !!net.forceAllowed, aiOn: net.aiOn, info });
+      }
+      k++;
+    }
+    // Everyone readied up during a countdown: no need to wait.
+    if (net.countdownEnd && net.conns.size && [...net.conns.values()].every((p) => p.ready)) {
+      stopCountdown();
+      startMultiplayer();
+    }
   }
+
+  // Host taps Start: go now if everyone is ready. Otherwise run a ready
+  // check; once it runs out the host may start anyway, and anyone still not
+  // ready joins the game with a random starting spot.
+  const READY_TIMEOUT = 20;
+
+  function hostStartPressed() {
+    if (net.role !== 'host' || !net.conns.size) return;
+    if (net.countdownEnd) {
+      stopCountdown();
+      lobbyBroadcast();
+      return;
+    }
+    if (net.forceAllowed || [...net.conns.values()].every((p) => p.ready)) {
+      startMultiplayer();
+      return;
+    }
+    net.countdownEnd = Date.now() + READY_TIMEOUT * 1000;
+    net.countdownTimer = setInterval(() => {
+      if (net.role !== 'host' || !net.countdownEnd) return stopCountdown();
+      if (Date.now() < net.countdownEnd) {
+        lobbyBroadcast();
+        return;
+      }
+      stopCountdown();
+      net.forceAllowed = true;
+      lobbyBroadcast();
+    }, 1000);
+    lobbyBroadcast();
+  }
+
+  function stopCountdown() {
+    clearInterval(net.countdownTimer);
+    net.countdownTimer = null;
+    net.countdownEnd = null;
+  }
+
+  // Tapping a swatch in the lobby: the host changes directly, joiners ask.
+  $('lobby-colours').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    const k = Number(b.dataset.v);
+    if (net.role === 'host' && colourFree(k, null)) {
+      net.hostColour = k;
+      lobbyBroadcast();
+    } else if (net.role === 'client' && net.host && net.host.open) {
+      net.host.send({ t: 'colour', k });
+    }
+    sfx('tap');
+  });
+
+  $('btn-ready').addEventListener('click', () => {
+    if (net.role !== 'client' || !net.host || !net.host.open || !net.lobby) return;
+    const me = net.lobby[net.you];
+    net.host.send({ t: 'ready', on: !(me && me.ready) });
+    sfx('tap');
+  });
 
   function hostGame() {
     if (!window.Peer) {
@@ -2591,6 +2855,8 @@
     }
     netLeave();
     net.role = 'host';
+    net.hostColour = settings.colour;
+    net.aiOn = new Array(MAX_FACTIONS).fill(true);
     net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
     document.body.classList.add('mp');
     showLobby('Creating a room…');
@@ -2640,16 +2906,25 @@
         return;
       }
       const started = G && !G.demo;
-      if (started || net.conns.size >= FACTIONS.length - 1) {
+      if (started || net.conns.size >= MAX_FACTIONS - 1) {
         conn.send({ t: 'refused', why: started ? 'That game has already started' : 'That room is full' });
         setTimeout(() => conn.close(), 500);
         return;
       }
-      net.conns.set(conn.peer, { conn, name: cleanName(msg.name), fid: -1 });
+      const wanted = lobbyPlayers().map((p) => p.colour).concat(msg.colour);
+      const colour = resolveColours(wanted).pop();
+      net.conns.set(conn.peer, { conn, name: cleanName(msg.name), colour, fid: -1 });
       lobbyBroadcast();
-    } else if (msg.t === 'ready') {
+    } else if (msg.t === 'loaded') {
       const p = net.conns.get(conn.peer);
-      if (p) p.ready = true;
+      if (p) p.loaded = true;
+    } else if (msg.t === 'ready' || msg.t === 'colour') {
+      // Lobby changes from a joiner: only before the game starts.
+      const p = net.conns.get(conn.peer);
+      if (!p || (G && !G.demo)) return;
+      if (msg.t === 'ready') p.ready = !!msg.on;
+      else if (colourFree(msg.k, conn.peer)) p.colour = msg.k;
+      lobbyBroadcast();
     } else if (msg.t === 'error') {
       const p = net.conns.get(conn.peer);
       toast(`${p ? p.name : 'A player'} hit a problem: ${String(msg.msg).slice(0, 120)}`);
@@ -2686,7 +2961,15 @@
 
   function startMultiplayer() {
     if (net.role !== 'host' || !net.conns.size) return;
-    newGame(false, lobbyPlayers());
+    const unready = [...net.conns.values()].map((p) => !p.ready);
+    const humans = lobbyPlayers();
+    const ais = net.aiOn.slice(humans.length).filter(Boolean).length;
+    newGame(false, humans, ais);
+    net.forceAllowed = false;
+    // Players who weren't ready get a random start so nobody is held up.
+    unready.forEach((away, k) => {
+      if (away) actSpawn(k + 1, -1);
+    });
     const full = snapshot(true);
     const own = full.own;
     full.own = null;
@@ -2695,7 +2978,7 @@
     let fid = 1;
     for (const p of net.conns.values()) {
       p.fid = fid++;
-      p.ready = false;
+      p.loaded = false;
       p.conn.send({
         t: 'start',
         myId: p.fid,
@@ -2705,7 +2988,9 @@
         gh: G.gh,
         difficulty: settings.difficulty,
         version: APP_VERSION,
-        factions: G.factions.map((f) => ({ name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona })),
+        factions: G.factions.map((f) => ({
+          name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: f.colour,
+        })),
         parts: parts.length,
       });
       parts.forEach((d, k) => p.conn.send({ t: 'own', k, d }));
@@ -2715,7 +3000,7 @@
     net.sentBver = G.bver;
     setTimeout(() => {
       for (const p of net.conns.values()) {
-        if (p.fid >= 0 && !p.ready) toast(`${p.name} hasn't finished loading. Their connection may be struggling`);
+        if (p.fid >= 0 && !p.loaded) toast(`${p.name} hasn't finished loading. Their connection may be struggling`);
       }
     }, 15000);
   }
@@ -2801,7 +3086,7 @@
       if (net.host) return;
       const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
       net.host = conn;
-      conn.on('open', () => conn.send({ t: 'hello', name: playerName(), v: APP_VERSION }));
+      conn.on('open', () => conn.send({ t: 'hello', name: playerName(), colour: settings.colour, v: APP_VERSION }));
       conn.on('data', clientReceive);
       conn.on('close', () => {
         if (net.role === 'client') netFail('The host has left the game');
@@ -2819,7 +3104,7 @@
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'lobby') {
       net.code = msg.code;
-      renderLobby(msg.players);
+      renderLobby(msg.players, msg.you, msg.countdown, msg.force, msg.aiOn || [], msg.info);
     } else if (msg.t === 'refused') {
       netFail(msg.why);
     } else if (msg.t === 'start') {
@@ -2885,7 +3170,7 @@
     G.pendingSnaps = [];
     updateBanner();
     updateHud(true);
-    net.host.send({ t: 'ready' });
+    net.host.send({ t: 'loaded' });
   }
 
   function clientStart(msg) {
@@ -2899,7 +3184,7 @@
     buildWorld(msg.kind, msg.seed, msg.gw, msg.gh, false);
     G.mp = true;
     G.factions = msg.factions.map((f, id) => makeFaction(id, {
-      name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona,
+      name: f.name, player: f.player, isPlayer: f.isPlayer, persona: f.persona, colour: COLOURS[f.colour] ? f.colour : 0,
     }));
     // Stay on the lobby screen until every piece of the map has arrived.
     G.loading = true;
@@ -2983,6 +3268,8 @@
     net.pending.clear();
     net.code = '';
     net.opened = false;
+    net.forceAllowed = false;
+    stopCountdown();
     myId = 0;
     document.body.classList.remove('mp', 'mp-client');
     if (role && document.body.dataset.state === 'lobby') document.body.dataset.state = G ? G.state : 'menu';
@@ -3004,7 +3291,7 @@
   $('mp-code').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') $('btn-join').click();
   });
-  $('btn-start').addEventListener('click', startMultiplayer);
+  $('btn-start').addEventListener('click', hostStartPressed);
   $('btn-leave').addEventListener('click', toMenu);
   $('mp-name').value = store.get('name', '');
   $('version').textContent = `v${APP_VERSION}`;
@@ -3015,6 +3302,7 @@
     get myId() { return myId; },
     net,
     doAction,
+    hearing,
     view,
     // Client (CSS pixel) position of a cell's centre, for automated tests.
     clientPos: (i) => ({ x: (sx(cx(i) + 0.5)) / view.dpr, y: (sy(cy(i) + 0.5)) / view.dpr }),
