@@ -29,12 +29,13 @@
   const SLOT = 10;                // stride for the attacker/target lookup table
   // Building stats by level (index 0 = level 1). Upgrades go up to level 3.
   const MAX_LEVEL = 3;
-  const CITY_CAP = [1500, 3000, 5000];
-  const CITY_TROOPS = [2, 4, 7];
-  const CITY_GOLD = [1.5, 3, 5];
+  const CITY_CAP = [3000, 6000, 10000];
+  const CITY_TROOPS = [8, 16, 28];
+  const CITY_GOLD = [3, 6, 10];
   const MINE_GOLD = [4, 7, 11];
-  const FORT_RADIUS = [6, 8, 10];
-  const FORT_MULT = [3, 4, 5];
+  const FORT_RADIUS = [8, 11, 14];
+  const FORT_MULT = [4, 6, 8];
+  const FORT_SHIELD = 0.5;        // defenders inside fort range lose half as many troops
   const RAD_MULT = 4;             // irradiated land is this much harder to take
   const RAD_TIME = 45;
   const ART_RANGE = [22, 28, 34];
@@ -119,8 +120,8 @@
       stats: (l) => `+${MINE_GOLD[l - 1]} gold/s (build on a gold deposit)`,
     },
     fort: {
-      label: 'Fort', icon: '🛡️', cost: 180, step: 1.3, hp: 4,
-      stats: (l) => `Land within ${FORT_RADIUS[l - 1]} cells is ${FORT_MULT[l - 1]}× harder to take`,
+      label: 'Fort', icon: '🛡️', cost: 180, step: 1.3, hp: 6,
+      stats: (l) => `Land within ${FORT_RADIUS[l - 1]} cells is ${FORT_MULT[l - 1]}× harder to take, and defenders there lose half as many troops`,
     },
     artillery: {
       label: 'Artillery', icon: '🎯', cost: 350, step: 1.35, hp: 2,
@@ -602,6 +603,7 @@
           team: teams ? teams[id] || 0 : 0,
           persona: persona.label,
           aggr: clamp(persona.aggr + diff.aggr, 0.05, 1),
+          baseAggr: persona.aggr,
           income: demo ? 1 : diff.income,
           nextThink: 1 + rng() * 2,
         }));
@@ -879,8 +881,11 @@
       return;
     }
     const interest = f.troops * 0.07 * (1 - f.troops / max);
+    // AI nations that haven't met an enemy yet grow at the full, un-eased
+    // rate, so the opening land grab keeps its pace on every difficulty.
+    const income = f.landGrab ? Math.max(1, f.income) : f.income;
     const base = 0.5 + f.cells * 0.04 + f.troopBonus;
-    f.troops = Math.min(max, f.troops + (base + interest) * TICK * f.income);
+    f.troops = Math.min(max, f.troops + (base + interest) * TICK * income);
   }
 
   function launch(from, to, troops, aimX, aimY) {
@@ -951,11 +956,13 @@
     }
   }
 
-  function captureCost(i, def, density) {
+  // The troops it costs to capture a cell, and whether a fort shields the
+  // defenders there (they then lose fewer troops).
+  function captureTerms(i, def, density) {
+    const fort = def && def.built.fort ? fortMult(i, def.id) : 1;
     let c = def ? 1.5 + density * 1.15 : NEUTRAL_COST;
     if (G.rad[i] > 0) c *= RAD_MULT;
-    if (def && def.built.fort) c *= fortMult(i, def.id);
-    return c;
+    return { cost: c * fort, shielded: fort > 1 };
   }
 
   // Take one cell for `atk`, paying from `pool` (an attack or a boat).
@@ -964,10 +971,10 @@
     const o = G.owner[i];
     const def = o >= 0 ? G.factions[o] : null;
     const density = def ? def.troops / Math.max(1, def.cells) : 0;
-    const cost = captureCost(i, def, density);
+    const { cost, shielded } = captureTerms(i, def, density);
     if (pool.troops < cost) return false;
     pool.troops -= cost;
-    if (def) def.troops = Math.max(0, def.troops - density);
+    if (def) def.troops = Math.max(0, def.troops - density * (shielded ? FORT_SHIELD : 1));
     setOwner(i, atk.id);
     if (def && def.cells === 0) eliminate(def, atk.id);
     return true;
@@ -1550,6 +1557,8 @@
     const aggr = f.aggr;
     f.nextThink = G.time + (2.8 - aggr * 1.8) * (0.6 + Math.random() * 0.8);
     const scan = neighbourScan(f.id);
+    // Still in the land grab: bordering empty land and no enemy yet.
+    f.landGrab = scan.counts.has(NEUTRAL) && ![...scan.counts.keys()].some((o) => o >= 0 && !allied(o, f.id));
     aiBuild(f, scan);
     if (G.attacks.filter((a) => a.from === f.id).length >= 2) return;
     const ratio = f.troops / maxTroops(f);
@@ -1576,9 +1585,12 @@
     if (best !== null && readyForWar && bestScore > (neutralOpen ? 1.6 - aggr * 0.6 : 1.0)) {
       target = best;
       pct = 0.4 + 0.5 * aggr;
-    } else if (neutralOpen && ratio > 0.12 + 0.25 * (1 - aggr)) {
+    } else if (neutralOpen && ratio > 0.12 + 0.25 * (1 - (f.baseAggr ?? aggr))) {
+      // Grabbing empty land uses the personality's own pace: difficulty only
+      // changes how readily AIs fight.
+      const grab = f.baseAggr ?? aggr;
       target = NEUTRAL;
-      pct = 0.3 + 0.3 * aggr;
+      pct = 0.3 + 0.3 * grab;
     } else if (!neutralOpen && best !== null && ratio > 0.9 && bestScore > 0.5) {
       // Hemmed in and at full strength: use the troops rather than waste them.
       target = best;

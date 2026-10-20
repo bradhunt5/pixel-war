@@ -43,13 +43,15 @@ They must sit at least two cells apart. Captured buildings change hands.
 
 | Building | Cost | Level 1 | Level 2 | Level 3 |
 | --- | --- | --- | --- | --- |
-| 🏙️ City | 250 | +1,500 troop cap, +2 troops/s, +1.5 gold/s | +3,000 cap, +4 troops/s, +3 gold/s | +5,000 cap, +7 troops/s, +5 gold/s |
+| 🏙️ City | 250 | +3,000 troop cap, +8 troops/s, +3 gold/s | +6,000 cap, +16 troops/s, +6 gold/s | +10,000 cap, +28 troops/s, +10 gold/s |
 | ⛏️ Gold mine | 120 | +4 gold/s | +7 gold/s | +11 gold/s |
-| 🛡️ Fort | 180 | Land within 6 cells 3× harder to take | 8 cells, 4× | 10 cells, 5× |
+| 🛡️ Fort | 180 | Land within 8 cells 4× harder to take | 11 cells, 6× | 14 cells, 8× |
 | 🎯 Artillery | 350 | Range 22, fires every 3.5 s | Range 28, every 2.4 s | Range 34, every 1.5 s, bigger blast |
 | ☢️ Nuclear silo | 1,200 | Nuke blast radius 7, 30 s reload | Radius 10, 20 s reload | Radius 13, 12 s reload |
 
-Gold mines only go on gold deposits (the yellow dots).
+Gold mines only go on gold deposits (the yellow dots). Defenders inside a
+fort's range also lose only half as many troops when land there falls, and
+forts take 6 artillery hits to destroy (7 at level 2, 8 at level 3).
 
 **Upgrades:** tap one of your buildings to see what it does now and what the
 next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
