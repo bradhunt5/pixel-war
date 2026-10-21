@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.6';
+  const APP_VERSION = '1.9.7';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -1917,8 +1917,9 @@
         const o = G.owner[i];
         if (o < 0 || allied(o, s.owner)) continue;
         hit.add(o);
-        const wall = G.walls.length ? wallThrough(i, o) : null;
-        if (wall) breachWall(wall, s.owner, i);
+        // A standing wall absorbs shells and bombs: the land under it stays
+        // its owner's (only nukes, a siege or losing a fort bring it down).
+        if (G.walls.length && wallThrough(i, o)) continue;
         // A surviving building shrugs off the hit and keeps its cell.
         if (hitBuilding(i)) continue;
         const def = G.factions[o];
@@ -4392,7 +4393,7 @@
         const mine = wallsOf(b).length;
         html += `<p class="now">🧱 Walls: ${mine} of ${WALLS_PER_FORT}. A wall joins two forts up to `
           + `${Math.round(sc(WALL_MAX))} cells apart into one big fort: land along the wall, out to the weaker fort's range, is defended like a fort's. `
-          + 'The wall holds out under siege like a fort, but comes down if it is overrun or blasted.</p>';
+          + 'The wall holds out under siege like a fort and shrugs off shells and bombs, but comes down if it is overrun, nuked or loses a fort.</p>';
         if (mine < WALLS_PER_FORT) {
           const options = wallTargets(b).filter((t) => wallsOf(t.fort).length < WALLS_PER_FORT);
           if (!options.length) html += '<p class="now">Build another fort within reach (joined to this one by your land) to wall them together.</p>';

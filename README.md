@@ -84,9 +84,10 @@ can build a chain along a border. Walls are as tough as forts: to break
 through, invaders must besiege the wall line just like a fort (2, 4 or 6
 seconds by level), and the siege only progresses while they outnumber the
 defenders 1.5×, 2× or 3× (the same goes for the forts themselves). An
-overwhelmed wall is breached and comes down. A nuke, bomb or shell landing
-on the wall line also destroys it, as does losing either fort or any of
-the land under the wall.
+overwhelmed wall is breached and comes down. Shells and bombs can't knock
+out the land under a standing wall: the wall absorbs them. A nuke landing on
+the wall line does destroy it, as does losing either fort (artillery can
+still wear a fort down) or any of the land under the wall.
 
 **Upgrades:** tap one of your buildings to see what it does now and what the
 next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
