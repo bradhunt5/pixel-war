@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.7';
+  const APP_VERSION = '1.10.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -320,11 +320,266 @@
   const sc2 = (v) => v * G.scale * G.scale;
   // Factions a and b (ids; -1 is unclaimed land) are friends: the same
   // faction, or both on the same team. Allies never attack each other.
+  // Friendly for combat purposes: allies, and nations under a ceasefire.
   function allied(a, b) {
     if (a === b) return true;
     if (a < 0 || b < 0) return false;
-    const ta = G.factions[a].team;
-    return !!ta && ta === G.factions[b].team;
+    return G.ally[a * SLOT + b] === 1 || G.truce[a * SLOT + b] > G.time;
+  }
+
+  // ---------- Diplomacy ----------
+  //
+  // Alliances can be made and broken during a game (lobby teams simply start
+  // allied). Every nation also has an opinion of every other, from -100
+  // (hostile) to +100 (trusted), which drives the AI's diplomacy.
+  const TRUCE_TIME = 15;          // ceasefire after an alliance is ended politely
+  const PROPOSE_GAP = 30;         // seconds before asking the same nation again
+  const OFFER_TIME = 20;          // seconds a player has to answer a proposal
+  const ALLY_LIMIT = 2;           // alliances an AI keeps at once
+  const PERSONA_TRUST = { Turtle: 15, Settler: 5, Balanced: 0, Raider: -10, Aggressor: -15 };
+  const LEVEL_TRUST = { easy: 10, normal: 0, hard: -10 };
+
+  const pair = (a, b) => a * SLOT + b;
+  const isAlly = (a, b) => a !== b && a >= 0 && b >= 0 && G.ally[pair(a, b)] === 1;
+  const inTruce = (a, b) => a >= 0 && b >= 0 && G.truce[pair(a, b)] > G.time;
+  const relOf = (a, b) => G.rel[pair(a, b)];
+  function addRel(a, b, d) {
+    if (a < 0 || b < 0 || a === b) return;
+    G.rel[pair(a, b)] = clamp(G.rel[pair(a, b)] + d, -100, 100);
+  }
+  const relLabel = (v) => (v >= 60 ? 'Trusted' : v >= 25 ? 'Friendly' : v > -25 ? 'Neutral' : v > -60 ? 'Wary' : 'Hostile');
+
+  function setAlly(a, b, on) {
+    G.ally[pair(a, b)] = G.ally[pair(b, a)] = on ? 1 : 0;
+    G.dver++;
+  }
+
+  function formAlliance(a, b) {
+    setAlly(a, b, true);
+    G.truce[pair(a, b)] = G.truce[pair(b, a)] = 0;
+    addRel(a, b, 10);
+    addRel(b, a, 10);
+    G.proposals = G.proposals.filter((p) => !((p.from === a && p.to === b) || (p.from === b && p.to === a)));
+    stat(a, 'allies');
+    stat(b, 'allies');
+    announce({ k: 'ally', f: a, to: b });
+  }
+
+  // Ending an alliance politely gives both sides a short ceasefire; a
+  // betrayal (attacking an ally) doesn't, and nobody forgets it.
+  function endAlliance(a, b, betrayal) {
+    setAlly(a, b, false);
+    if (betrayal) {
+      G.rel[pair(b, a)] = -100;
+    } else {
+      G.truce[pair(a, b)] = G.truce[pair(b, a)] = G.time + TRUCE_TIME;
+      G.dver++;
+      addRel(b, a, -25);
+    }
+    for (const x of G.factions) if (x.id !== a && x.id !== b) addRel(x.id, a, betrayal ? -20 : -5);
+    stat(a, 'broken');
+    announce({ k: 'allyEnd', f: a, to: b, betrayal: !!betrayal });
+  }
+
+  // How far a strike of this kind by fid reaches (cells).
+  function blastRadius(fid, kind) {
+    if (kind === 'tsar') return Math.round(sc(TSAR_RADIUS));
+    if (kind === 'strike') return Math.round(sc(STRIKE_SPREAD));
+    return Math.round(sc(NUKE_RADIUS[clamp((G.factions[fid].siloLevel || 1) - 1, 0, 2)]));
+  }
+
+  // Whose land a blast at cell would mostly hit: the nation (other than the
+  // shooter) owning at least half the land in range, or -1.
+  function blastVictim(cell, R, shooter) {
+    const counts = new Map();
+    let land = 0;
+    const x0 = cx(cell);
+    const y0 = cy(cell);
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        if (dx * dx + dy * dy > R * R) continue;
+        const x = wx(x0 + dx);
+        const y = y0 + dy;
+        if (x < 0 || y < 0 || x >= G.gw || y >= G.gh) continue;
+        const o = G.owner[y * G.gw + x];
+        if (o === WATER) continue;
+        land++;
+        if (o >= 0 && o !== shooter) counts.set(o, (counts.get(o) || 0) + 1);
+      }
+    }
+    for (const [o, n] of counts) if (n >= land / 2) return { owner: o, counts, land };
+    return { owner: -1, counts, land };
+  }
+
+  // A blast that splashes onto an ally's land (75% of it or less): the first
+  // time they warn you; a second time within a few minutes ends the
+  // alliance as a betrayal.
+  const WARN_MEMORY = 180;
+  function splashAllies(shooter, target, kind) {
+    const bv = blastVictim(target, blastRadius(shooter, kind), shooter);
+    for (const x of bv.counts.keys()) {
+      if (!isAlly(shooter, x)) continue;
+      const k = pair(x, shooter);
+      if (G.warned[k] > 0 && G.time - G.warned[k] < WARN_MEMORY) {
+        endAlliance(shooter, x, true);
+        continue;
+      }
+      G.warned[k] = G.time;
+      addRel(x, shooter, -15);
+      announce({ k: 'warning', f: shooter, to: x });
+    }
+  }
+
+  // A hostile act: the victim likes the aggressor less, and anyone who
+  // dislikes the victim warms to the aggressor (the enemy of my enemy).
+  function hostile(from, to, amount) {
+    if (to < 0 || from < 0 || from === to) return;
+    if (G.tutorial && from === myId && G.tutorial.state) G.tutorial.state.attacked = true;
+    addRel(to, from, -amount);
+    for (const x of G.factions) {
+      if (x.alive && x.id !== from && x.id !== to && relOf(x.id, to) < -30) addRel(x.id, from, amount * 0.2);
+    }
+  }
+
+  // Would AI nation a ally with b? { yes, why } (why is told to b).
+  function allyVerdict(a, b) {
+    const f = G.factions[a];
+    const o = G.factions[b];
+    const r = relOf(a, b);
+    if (r <= -60) return { yes: false, why: `${f.name} doesn't trust you` };
+    const alive = G.factions.filter((x) => x.alive);
+    if (alive.filter((x) => isAlly(a, x.id)).length >= ALLY_LIMIT) {
+      return { yes: false, why: `${f.name} already has all the allies it wants` };
+    }
+    // Someone has to be left to beat: an alliance mustn't end the war outright.
+    const friends = (x, y) => x === y || isAlly(x, y) || (x === a && y === b) || (x === b && y === a);
+    if (alive.every((x) => alive.every((y) => friends(x.id, y.id)))) {
+      return { yes: false, why: `${f.name} wants to win this war outright` };
+    }
+    let score = r + (PERSONA_TRUST[f.persona] || 0) + (LEVEL_TRUST[f.level] || 0);
+    if (o.troops > f.troops) score += 10;
+    if (alive.some((x) => x.id !== a && x.id !== b && !isAlly(a, x.id) && x.cells > f.cells && x.cells > o.cells)) score += 10;
+    if (score >= 25) return { yes: true, why: '' };
+    return {
+      yes: false,
+      why: r < -10 ? `${f.name} hasn't forgiven your attacks` : `${f.name} doesn't trust you enough yet. Sending aid helps`,
+    };
+  }
+
+  // Once a second (host): opinions drift, nations wary of a giant, AIs make
+  // and break alliances, and unanswered proposals lapse.
+  function diplomacySecond() {
+    const alive = G.factions.filter((f) => f.alive);
+    const giant = alive.find((f) => f.cells > G.landCells * 0.2 && alive.every((o) => o === f || o.cells < f.cells));
+    for (const a of alive) {
+      for (const b of alive) {
+        if (a === b) continue;
+        const k = pair(a.id, b.id);
+        const ally = isAlly(a.id, b.id);
+        // Opinions settle towards: allies 60; nations facing a common threat
+        // (a runaway leader neither is allied with) 40; otherwise neutral.
+        const threat = giant && giant !== a && giant !== b && !isAlly(giant.id, a.id) && !isAlly(giant.id, b.id);
+        G.rel[k] += clamp((ally ? 60 : threat ? 40 : 0) - G.rel[k], -0.25, ally ? 0.5 : 0.25);
+        if (b.cells > G.landCells * 0.3) G.rel[k] = Math.max(-100, G.rel[k] - 0.3);
+      }
+    }
+    for (const f of alive) if (!f.isPlayer && G.time >= (f.nextDip || 0)) aiDiplomacy(f);
+    G.proposals = G.proposals.filter((p) => p.until > G.time);
+  }
+
+  function aiDiplomacy(f) {
+    f.nextDip = G.time + 8 + Math.random() * 8;
+    // Fall out with an ally it has come to dislike.
+    for (const o of G.factions) {
+      if (o.alive && isAlly(f.id, o.id) && relOf(f.id, o.id) < -10) {
+        endAlliance(f.id, o.id, false);
+        return;
+      }
+    }
+    // Court the nation it likes best.
+    let best = null;
+    for (const o of G.factions) {
+      if (!o.alive || o.id === f.id || isAlly(f.id, o.id) || inTruce(f.id, o.id)) continue;
+      if (G.time < G.propAt[pair(f.id, o.id)]) continue;
+      if (relOf(f.id, o.id) >= 30 && (!best || relOf(f.id, o.id) > relOf(f.id, best.id))) best = o;
+    }
+    if (!best || !allyVerdict(f.id, best.id).yes) return;
+    G.propAt[pair(f.id, best.id)] = G.time + 60;
+    if (best.isPlayer) {
+      if (!G.proposals.some((p) => p.to === best.id)) {
+        G.proposals.push({ from: f.id, to: best.id, until: G.time + OFFER_TIME });
+        announce({ k: 'proposal', f: f.id, to: best.id });
+      }
+    } else if (allyVerdict(best.id, f.id).yes) {
+      formAlliance(f.id, best.id);
+    }
+  }
+
+  function actPropose(fid, to) {
+    const o = G.factions[to];
+    if (!o || !o.alive || to === fid) return fail('');
+    if (isAlly(fid, to)) return fail(`You're already allied with ${o.name}`);
+    if (inTruce(fid, to)) return fail(`Wait for the ceasefire with ${o.name} to end first`);
+    const wait = G.propAt[pair(fid, to)] - G.time;
+    if (wait > 0) return fail(`You asked ${o.name} recently. Try again in ${Math.ceil(wait)}s`);
+    G.propAt[pair(fid, to)] = G.time + PROPOSE_GAP;
+    // They had already asked us: that's a yes.
+    if (G.proposals.some((p) => p.from === to && p.to === fid)) {
+      formAlliance(to, fid);
+      return { ok: true, msg: '' };
+    }
+    if (o.isPlayer) {
+      G.proposals.push({ from: fid, to, until: G.time + OFFER_TIME });
+      announce({ k: 'proposal', f: fid, to });
+      return { ok: true, msg: `🤝 Alliance proposed to ${o.name}. Waiting for an answer…` };
+    }
+    const v = allyVerdict(to, fid);
+    if (!v.yes) return { ok: false, msg: `${o.name} declines: ${v.why.replace(`${o.name} `, '')}` };
+    formAlliance(fid, to);
+    return { ok: true, msg: '' };
+  }
+
+  function actRespond(fid, from, yes) {
+    const k = G.proposals.findIndex((p) => p.from === from && p.to === fid && p.until > G.time);
+    if (k < 0) return fail('That offer has expired');
+    G.proposals.splice(k, 1);
+    if (yes) formAlliance(from, fid);
+    else announce({ k: 'declined', f: fid, to: from });
+    return { ok: true, msg: '' };
+  }
+
+  function actBreak(fid, to) {
+    if (!isAlly(fid, to)) return fail('');
+    endAlliance(fid, to, false);
+    return { ok: true, msg: '' };
+  }
+
+  // Aid: gold or troops to any nation. It builds trust, more so the bigger
+  // the gift is for them.
+  function actAid(fid, to, kind, pct) {
+    const me = G.factions[fid];
+    const o = G.factions[to];
+    if (!o || !o.alive || to === fid || ![10, 25, 50].includes(pct)) return fail('');
+    let amount;
+    if (kind === 'gold') {
+      amount = Math.floor(me.gold * pct / 100);
+      if (amount < 1) return fail('Not enough gold');
+      me.gold -= amount;
+      o.gold += amount;
+      addRel(to, fid, Math.min(25, 50 * amount / (amount + o.gold + 1000)));
+      stat(fid, 'aidGold', amount);
+    } else if (kind === 'troops') {
+      amount = Math.floor(Math.min(me.troops * pct / 100, Math.max(0, maxTroops(o) - o.troops)));
+      if (amount < 1) return fail(`${o.name} has no room for more troops`);
+      me.troops -= amount;
+      o.troops += amount;
+      addRel(to, fid, Math.min(25, 50 * amount / (amount + o.troops + 1000)));
+      stat(fid, 'aidTroops', amount);
+    } else {
+      return fail('');
+    }
+    announce({ k: 'aid', f: fid, to, kind, amount });
+    return { ok: true, msg: `🎁 Sent ${fmt(amount)} ${kind} to ${o.name}` };
   }
 
   const cellDist = (a, b) => Math.hypot(ddx(a, b), cy(a) - cy(b));
@@ -584,6 +839,13 @@
       planes: [],
       ships: [],
       walls: [],
+      ally: new Uint8Array(SLOT * SLOT),
+      truce: new Float32Array(SLOT * SLOT),
+      rel: new Float32Array(SLOT * SLOT),
+      propAt: new Float32Array(SLOT * SLOT),
+      warned: new Float32Array(SLOT * SLOT),
+      proposals: [],
+      dver: 0,
       nextWallId: 1,
       nextShipId: 1,
       crates: [],
@@ -627,6 +889,10 @@
     ['ships', 'Warships built'],
     ['sunk', 'Ships and boats sunk'],
     ['downed', 'Missiles and planes shot down'],
+    ['allies', 'Alliances made'],
+    ['broken', 'Alliances ended'],
+    ['aidGold', 'Gold sent as aid'],
+    ['aidTroops', 'Troops sent as aid'],
   ];
   const newStats = () => Object.fromEntries(STATS.map(([k]) => [k, 0]));
   function stat(fid, key, n = 1) {
@@ -671,6 +937,7 @@
   // setting); teams: team number (0 = none) for each faction in order.
   function newGame(demo, humans, aiCount, teams, aiLevels) {
     $('over').classList.remove('show');
+    document.body.classList.remove('tutorial');
     closeBuildSheet();
     acc = 0;
     setState(demo ? 'menu' : 'spawn');
@@ -733,6 +1000,16 @@
           level,
           nextThink: 1 + rng() * 2,
         }));
+      }
+    }
+
+    // Teams from the lobby (or single-player allies) start out allied.
+    for (const a of G.factions) {
+      for (const b of G.factions) {
+        if (a !== b && a.team && a.team === b.team) {
+          G.ally[pair(a.id, b.id)] = 1;
+          G.rel[pair(a.id, b.id)] = 60;
+        }
       }
     }
 
@@ -1287,6 +1564,7 @@
     if (troops < 1) return false;
     f.troops -= troops;
     addAttack(from, to, troops, aimX, aimY);
+    hostile(from, to, 12);
     return true;
   }
 
@@ -1342,7 +1620,42 @@
 
   function showEvent(ev) {
     const name = (id) => G.factions[id].name;
-    if (ev.k === 'elim') {
+    if (ev.k === 'ally') {
+      const other = ev.f === myId ? ev.to : ev.to === myId ? ev.f : -1;
+      if (other >= 0) {
+        sfx('upgrade');
+        toast(`🤝 You are now allied with ${name(other)}`);
+        hideOffer();
+      } else {
+        toast(`🤝 ${name(ev.f)} and ${name(ev.to)} are now allies`);
+      }
+    } else if (ev.k === 'allyEnd') {
+      if (ev.to === myId) {
+        sfx('error');
+        toast(ev.betrayal ? `💔 ${name(ev.f)} has betrayed you!` : `💔 ${name(ev.f)} has ended your alliance. War resumes in ${TRUCE_TIME}s`);
+      } else if (ev.f === myId) {
+        toast(ev.betrayal ? `💔 You betrayed ${name(ev.to)}!` : `You ended your alliance with ${name(ev.to)}. Ceasefire for ${TRUCE_TIME}s`);
+      } else {
+        toast(ev.betrayal ? `💔 ${name(ev.f)} has betrayed ${name(ev.to)}!` : `${name(ev.f)} has ended its alliance with ${name(ev.to)}`);
+      }
+    } else if (ev.k === 'proposal') {
+      if (ev.to === myId) showOffer(ev.f);
+    } else if (ev.k === 'declined') {
+      if (ev.to === myId) toast(`${name(ev.f)} declined your alliance`);
+    } else if (ev.k === 'aid') {
+      if (ev.to === myId) {
+        sfx('crate');
+        toast(`🎁 ${name(ev.f)} sent you ${fmt(ev.amount)} ${ev.kind}`);
+      }
+    } else if (ev.k === 'warning') {
+      if (ev.f === myId) {
+        sfx('error');
+        toast(`⚠ ${name(ev.to)} warns you: your strike hit their land. Do it again and the alliance is over`);
+      } else if (ev.to === myId) {
+        toast(`⚠ ${name(ev.f)}'s strike hit your land. You've warned them: next time the alliance is over`);
+      }
+    } else if (ev.k === 'elim') {
+      if (ev.f === offerFrom) hideOffer();
       if (ev.f === myId) return; // Our own defeat gets the results screen.
       sfx('fallen');
       if (ev.by === myId) toast(`You crushed ${name(ev.f)}!`);
@@ -1742,6 +2055,7 @@
     if (troops < 2) return 'Not enough troops yet';
     f.troops -= troops;
     stat(fid, 'boats');
+    hostile(fid, G.owner[target], 12);
     G.boats.push({
       id: G.nextBoatId = (G.nextBoatId || 0) + 1, owner: fid, troops, landing, aimX: cx(target), aimY: cy(target),
       voyage: makeVoyage(path), x: cx(path[0]) + 0.5, y: cy(path[0]) + 0.5, angle: 0, cell: path[0],
@@ -1928,8 +2242,12 @@
         lockCell(i, o, s.lock || SHELL_LOCK);
       }
     }
-    // Each hit also costs the nation a share of all its troops.
-    for (const fid of hit) G.factions[fid].troops *= 1 - (s.kill || SHELL_KILL);
+    // Each hit also costs the nation a share of all its troops (and a
+    // little of its goodwill).
+    for (const fid of hit) {
+      G.factions[fid].troops *= 1 - (s.kill || SHELL_KILL);
+      addRel(fid, s.owner, -0.5);
+    }
     addFx(s.to, 1 + r, '255,200,90', 450);
   }
 
@@ -1955,6 +2273,8 @@
     silo.readyAt = G.time + NUKE_COOLDOWN[silo.level - 1];
     G.bver++;
     G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: Math.round(sc(NUKE_RADIUS[silo.level - 1])) });
+    hostile(f.id, blastVictim(target, blastRadius(f.id, 'nuke'), f.id).owner, 40);
+    splashAllies(f.id, target, 'nuke');
     announce({ k: 'nuke', f: f.id });
     return null;
   }
@@ -1976,6 +2296,8 @@
       owner: f.id, from: silo.cell, to: target, t: 0, dur: TSAR_TIME,
       radius: Math.round(sc(TSAR_RADIUS)), tsar: true, hp: 2,
     });
+    hostile(f.id, blastVictim(target, blastRadius(f.id, 'tsar'), f.id).owner, 60);
+    splashAllies(f.id, target, 'tsar');
     announce({ k: 'tsar', f: f.id });
     return null;
   }
@@ -2184,6 +2506,7 @@
     f.troops -= troops;
     useAirbase(base);
     stat(f.id, 'paras');
+    hostile(f.id, G.owner[target], 12);
     G.planes.push({ owner: f.id, from: base.cell, to: target, t: 0, dur: PLANE_TIME, troops, kind: 'para', base: baseRef(base) });
     return null;
   }
@@ -2212,6 +2535,8 @@
     f.gold -= STRIKE_COST;
     useAirbase(base);
     stat(f.id, 'strikes');
+    hostile(f.id, vessel ? vessel.owner : blastVictim(target, blastRadius(f.id, 'strike'), f.id).owner, 20);
+    if (!vessel) splashAllies(f.id, target, 'strike');
     G.planes.push({
       owner: f.id, from: base.cell, to: vessel ? vessel.cell : target, t: 0, dur: PLANE_TIME, troops: 0, kind: 'strike',
       base: baseRef(base), vessel: vessel ? { ship: G.ships.includes(vessel) ? vessel.id : -1, boat: G.boats.includes(vessel) ? vessel.id : -1 } : null,
@@ -2522,6 +2847,7 @@
     });
     G.track = track;
     for (const [wall, i] of breached) breachWall(wall, m.owner, i);
+
     // The blast kills a share of the whole nation's troops, more the more
     // of its land is destroyed.
     for (const [fid, [lost, before]] of hit) {
@@ -2601,6 +2927,30 @@
     G.fx.push({
       x: at ? at.x : cx(cell) + 0.5, y: at ? at.y : cy(cell) + 0.5,
       radius, rgb, start: performance.now(), dur, seed: Math.random() * 1000,
+    });
+  }
+
+  // ---------- Alliance offers (to this device's player) ----------
+
+  let offerFrom = -1;
+  let offerTimer = 0;
+  function showOffer(from) {
+    offerFrom = from;
+    $('offer-text').textContent = `🤝 ${G.factions[from].name} proposes an alliance`;
+    $('offer').classList.add('show');
+    sfx('tap');
+    clearTimeout(offerTimer);
+    offerTimer = setTimeout(hideOffer, OFFER_TIME * 1000);
+  }
+  function hideOffer() {
+    offerFrom = -1;
+    $('offer').classList.remove('show');
+  }
+  for (const [id, yes] of [['btn-offer-yes', true], ['btn-offer-no', false]]) {
+    $(id).addEventListener('click', () => {
+      if (offerFrom < 0 || !G) return;
+      perform({ a: 'respond', to: offerFrom, yes });
+      hideOffer();
     });
   }
 
@@ -2867,6 +3217,8 @@
       const need = e.troops * (1.4 - aggr * 0.6) + 1.5 * Math.min(e.cells, shared * 3) + 1;
       let score = power / need;
       if (e.isPlayer) score *= (f.diff || G.diff).playerBias;
+      // Grudges: nations it can't stand make tempting targets.
+      score *= 1 + Math.max(0, -relOf(f.id, o)) / 100;
       if (score > bestScore) {
         bestScore = score;
         best = o;
@@ -2915,6 +3267,7 @@
     advancePlanes();
     advanceShips();
     if (G.walls.length) pruneWalls();
+    if (Math.floor(G.time) !== Math.floor(G.time - TICK)) diplomacySecond();
     spawnCrates();
     fireArtillery();
     if (G.factions.some((f) => f.built.coastal)) fireCoastal();
@@ -2941,8 +3294,9 @@
   function checkEnd() {
     const alive = G.factions.filter((f) => f.alive);
     const humans = alive.filter((f) => f.isPlayer);
-    const sides = new Set(alive.map((f) => (f.team ? 't' + f.team : 'f' + f.id)));
-    if (sides.size === 1 || !humans.length) {
+    // Over when everyone left is allied with everyone else.
+    const oneSide = alive.every((a) => alive.every((b) => a === b || isAlly(a.id, b.id)));
+    if (oneSide || !humans.length) {
       const winner = alive.sort((a, b) => b.cells - a.cells)[0];
       endGame(winner ? winner.id : -1);
     } else if (!G.factions[myId].alive) {
@@ -2983,7 +3337,7 @@
     const won = final && G.winner >= 0 && allied(G.winner, myId);
     sfx(won ? 'victory' : 'defeat');
     if (window.PixelMusic) window.PixelMusic.stop(1);
-    if (!G.recorded) {
+    if (!G.recorded && !G.tutorial) {
       G.recorded = true;
       if (won) {
         record.wins++;
@@ -3001,8 +3355,9 @@
     const winner = final && G.winner >= 0 ? G.factions[G.winner] : null;
     const leader = G.factions.filter((f) => f.alive && f.id !== myId).sort((a, b) => b.cells - a.cells)[0];
     let sub;
-    if (won && me.team && G.winner !== myId) sub = `Your team won! ${G.factions[G.winner].name} finished the job.`;
-    else if (won && me.team) sub = 'Your team won! The map is yours.';
+    const friends = G.factions.filter((f) => f.alive && f.id !== myId && isAlly(myId, f.id));
+    if (won && !me.alive) sub = `Your alliance won! ${G.factions[G.winner].name} finished the job.`;
+    else if (won && friends.length) sub = `Your alliance won! You share the map with ${friends.map((f) => f.name).join(' and ')}.`;
     else if (won) sub = 'Every rival has fallen. The map is yours.';
     else if (me.alive && winner) sub = `${winner.name} has won the war.`;
     else sub = `Your last pixel fell${leader ? '. ' + leader.name + (leader.persona ? ` (${leader.persona})` : '') + ' leads the map' : ''}.`;
@@ -3097,7 +3452,6 @@
   function actNuke(fid, i) {
     if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
-    if (allied(fid, G.owner[i])) return fail("That's your ally's land! Pick an enemy target");
     const err = launchNuke(G.factions[fid], i);
     return err ? fail(err) : { ok: true, msg: '' };
   }
@@ -3105,7 +3459,6 @@
   function actTsar(fid, i) {
     if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
-    if (allied(fid, G.owner[i])) return fail("That's your ally's land! Pick an enemy target");
     const err = launchTsar(G.factions[fid], i);
     return err ? fail(err) : { ok: true, msg: '' };
   }
@@ -3120,6 +3473,31 @@
     if (!G || G.demo || !act || !G.factions[fid]) return fail('');
     const cell = Number.isInteger(act.cell) && act.cell < G.n ? act.cell : -1;
     if (act.a === 'spawn') return actSpawn(fid, cell);
+    // Hostile acts against an ally are a betrayal: the first try only warns,
+    // a second (act.betray) ends the alliance with no ceasefire.
+    if (['attack', 'nuke', 'tsar', 'strike', 'para'].includes(act.a) && cell >= 0) {
+      // Troops go where you tap. A blast counts as an attack on an ally only
+      // if over 75% of the land it covers is theirs (less is a splash that
+      // earns a warning, see splashWarning), and on anyone else from half.
+      let o = G.owner[cell];
+      if (['nuke', 'tsar', 'strike'].includes(act.a)) {
+        const bv = blastVictim(cell, blastRadius(fid, act.a), fid);
+        o = -1;
+        for (const [x, n] of bv.counts) if (n > bv.land * (isAlly(fid, x) ? 0.75 : 0.5)) o = x;
+      }
+      if (o >= 0 && o !== fid) {
+        if (isAlly(fid, o)) {
+          if (!act.betray) return Object.assign(fail(`${G.factions[o].name} is your ally. Tap again to betray them and attack`), { ally: o });
+          endAlliance(fid, o, true);
+        } else if (inTruce(fid, o)) {
+          return fail(`Ceasefire with ${G.factions[o].name}: war resumes in ${Math.ceil(G.truce[pair(fid, o)] - G.time)}s`);
+        }
+      }
+    }
+    if (act.a === 'propose') return actPropose(fid, Number(act.to));
+    if (act.a === 'respond') return actRespond(fid, Number(act.to), !!act.yes);
+    if (act.a === 'break') return actBreak(fid, Number(act.to));
+    if (act.a === 'aid') return actAid(fid, Number(act.to), act.kind, Number(act.pct));
     if (G.state !== 'play' || !G.factions[fid].alive) return fail('');
     if (act.a === 'attack') return actAttack(fid, cell, act.pct);
     if (act.a === 'build') return actBuild(fid, act.building, cell);
@@ -3147,8 +3525,16 @@
   }
 
   // Perform an action for this device's player: here, or on the host.
+  // After a warning that a target is an ally, a second try on that nation
+  // within a few seconds confirms the betrayal.
+  let betrayAsk = null;
+
   function perform(act, after) {
+    if (betrayAsk && Number.isInteger(act.cell) && act.cell >= 0 && performance.now() < betrayAsk.until
+      && act.a === betrayAsk.a) act.betray = true;
     const done = (res) => {
+      if (!res.ok && res.ally !== undefined) betrayAsk = { a: act.a, until: performance.now() + 4000 };
+      else if (act.betray) betrayAsk = null;
       if (res.msg) toast(res.msg);
       if (res.ok) buzz();
       if (res.ok) {
@@ -3193,9 +3579,11 @@
       return;
     }
     if (G.mode && (G.mode.type === 'nuke' || G.mode.type === 'tsar')) {
-      perform({ a: G.mode.type, cell: i });
-      G.mode = null;
-      updateBanner();
+      perform({ a: G.mode.type, cell: i }, (res) => {
+        if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
+        G.mode = null;
+        updateBanner();
+      });
       return;
     }
     if (G.mode && (G.mode.type === 'para' || G.mode.type === 'strike')) {
@@ -3222,11 +3610,61 @@
       });
       return;
     }
-    if (i >= 0 && G.owner[i] === myId && G.bAt[i] >= 0) {
-      openUpgradeSheet(G.buildings.get(G.bAt[i]));
+    const building = buildingAtScreen(clientX, clientY);
+    if (building) {
+      openUpgradeSheet(building);
+      return;
+    }
+    const deposit = depositAtScreen(clientX, clientY, i);
+    if (deposit >= 0) {
+      openDepositSheet(deposit);
       return;
     }
     perform({ a: 'attack', cell: i, pct: settings.pct });
+  }
+
+  // One of our buildings whose icon is under this screen point. Icons are
+  // drawn bigger than a cell when zoomed out, so the whole icon counts.
+  function buildingAtScreen(clientX, clientY) {
+    const px = clientX * view.dpr;
+    const py = clientY * view.dpr;
+    const size = clamp(view.cell * 2.6, 14 * view.dpr, 30 * view.dpr);
+    let best = null;
+    let bestD = Math.max(size * 0.6, 12 * view.dpr);
+    for (const b of G.buildings.values()) {
+      if (b.owner !== myId) continue;
+      const y = sy(cy(b.cell) + 0.5);
+      for (const x of copies(sx(cx(b.cell) + 0.5), canvas.width)) {
+        const d = Math.hypot(x - px, y - py);
+        if (d < bestD) {
+          bestD = d;
+          best = b;
+        }
+      }
+    }
+    return best;
+  }
+
+  // A free gold deposit on our land under this screen point.
+  function depositAtScreen(clientX, clientY, tapped) {
+    const px = clientX * view.dpr;
+    const py = clientY * view.dpr;
+    const r = clamp(view.cell * 1.1, 3 * view.dpr, 9 * view.dpr);
+    let best = -1;
+    let bestD = r + 8 * view.dpr;
+    for (const i of G.depositCells) {
+      if (G.owner[i] !== myId || G.bAt[i] >= 0 || G.rad[i] > 0) continue;
+      const y = sy(cy(i) + 0.5);
+      for (const x of copies(sx(cx(i) + 0.5), canvas.width)) {
+        const d = Math.hypot(x - px, y - py);
+        // Near the dot counts if the tap is on our land, else only on it.
+        if (d < bestD && (G.owner[tapped] === myId || d <= r)) {
+          bestD = d;
+          best = i;
+        }
+      }
+    }
+    return best;
   }
 
   // One of our ships near this screen point (within a finger's width).
@@ -4293,6 +4731,7 @@
   }
 
   function updateHud(force) {
+    if (G && G.tutorial) tutorialTick();
     if (!G || G.demo) return;
     const me = G.factions[myId];
     $('troops').textContent = fmt(me.troops);
@@ -4333,20 +4772,40 @@
 
     if (force || G.time - hudTimer >= 0.5 || G.time < hudTimer) {
       hudTimer = G.time;
+      // Nations with nearly the same land keep a steady order, so rows don't
+      // swap under a finger.
+      const share = (f) => Math.round(f.cells / G.landCells * 1000);
       const rows = G.factions
         .filter((f) => f.alive)
-        .sort((a, b) => b.cells - a.cells)
+        .sort((a, b) => share(b) - share(a) || a.id - b.id)
         .slice(0, 6)
         .map((f) => {
           const pc = (f.cells / G.landCells * 100).toFixed(1);
-          const tag = f.team ? `<span class="tm">T${f.team}</span>` : '';
-          return `<li class="${f.id === myId ? 'me' : ''}"><span class="sw" style="background:${f.css}"></span>`
+          const tag = f.id === myId ? '' : isAlly(myId, f.id) ? '<span class="tm" title="Ally">🤝</span>'
+            : inTruce(myId, f.id) ? '<span class="tm" title="Ceasefire">⏸</span>' : '';
+          return `<li class="${f.id === myId ? 'me' : ''}" data-fid="${f.id}"><span class="sw" style="background:${f.css}"></span>`
             + `${tag}<span class="bn">${f.name}</span><span class="pc">${pc}%</span>`
             + `<span class="tr">${fmt(f.troops)}</span></li>`;
         });
       $('board').innerHTML = rows.join('');
-      if ($('build-sheet').classList.contains('show')) renderBuildSheet();
+      if ($('build-sheet').classList.contains('show') && !sheetPressed) renderBuildSheet();
     }
+  }
+
+  // The sheet's list is only redrawn when its contents change, and never
+  // while a finger is on it: replacing the buttons mid-tap loses the tap.
+  let listCache = null;
+  let sheetPressed = false;
+  const listOut = {
+    set html(h) {
+      if (h === listCache) return;
+      listCache = h;
+      $('build-list').innerHTML = h;
+    },
+  };
+  $('build-sheet').addEventListener('pointerdown', () => { sheetPressed = true; });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
+    $('build-sheet').addEventListener(ev, () => setTimeout(() => { sheetPressed = false; }, 60));
   }
 
   // The sheet shows the build menu, one building's upgrade panel, or the
@@ -4361,7 +4820,130 @@
     $('build-sheet').classList.add('show');
   }
 
+  // Tap a nation on the leaderboard for diplomacy.
+  let sheetNation = -1;
+  function openDiplomacy(fid) {
+    if (!G || G.state !== 'play' || fid === myId || !G.factions[fid]) return;
+    sheetBuilding = null;
+    sheetMode = 'diplo';
+    sheetNation = fid;
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  // Tapping a gold deposit on our land: build a mine right there.
+  let sheetDeposit = -1;
+  function openDepositSheet(cell) {
+    if (!G || G.state !== 'play') return;
+    sheetBuilding = null;
+    sheetMode = 'deposit';
+    sheetDeposit = cell;
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderDepositSheet() {
+    const me = G.factions[myId];
+    if (G.owner[sheetDeposit] !== myId || G.bAt[sheetDeposit] >= 0) {
+      closeBuildSheet();
+      return;
+    }
+    const info = BUILDINGS.mine;
+    const cost = costOf(me, 'mine');
+    $('sheet-title').textContent = '⛏️ Gold deposit';
+    listOut.html = `<button data-mine="${sheetDeposit}" ${me.gold < cost ? 'disabled' : ''}>`
+      + `<span class="bi">${info.icon}</span><span class="bt"><b>Build a gold mine here</b><small>${info.stats(1)}</small></span>`
+      + `<span class="bc">${fmt(cost)}g</span></button>`
+      + (me.gold < cost ? `<p class="now">You need ${fmt(cost - me.gold)} more gold.</p>` : '');
+  }
+
+  // The diplomacy menu: every other nation in a big, easy-to-tap list.
+  function openDiplomacyList() {
+    if (!G || G.state !== 'play') return;
+    sheetBuilding = null;
+    sheetMode = 'diplist';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderDiplomacyList() {
+    $('sheet-title').textContent = '🤝 Diplomacy';
+    // A fixed (alphabetical) order, so rows never move under a finger.
+    const others = G.factions.filter((f) => f.alive && f.id !== myId).sort((a, b) => a.name.localeCompare(b.name));
+    if (!others.length) {
+      listOut.html = '<p class="now">No other nations are left.</p>';
+      return;
+    }
+    listOut.html = others.map((o) => {
+      let status;
+      if (isAlly(myId, o.id)) status = '🤝 Your ally';
+      else if (inTruce(myId, o.id)) status = `⏸ Ceasefire: ${Math.ceil(G.truce[pair(myId, o.id)] - G.time)}s`;
+      else if (o.isPlayer) status = 'Player · not allied';
+      else {
+        const r = relOf(o.id, myId);
+        status = `<span class="rel-${relLabel(r).toLowerCase()}">${relLabel(r)}</span> towards you (${r > 0 ? '+' : ''}${Math.round(r)})`;
+      }
+      const who = o.isPlayer ? o.name : `${o.name} · ${levelLabel(o.level || settings.difficulty)} AI`;
+      return `<button class="nation-row" data-nation="${o.id}"><span class="bi"><span class="sw" style="background:${o.css}"></span></span>`
+        + `<span class="bt"><b>${who}</b><small>${status}</small></span>`
+        + `<span class="bc">${(o.cells / G.landCells * 100).toFixed(1)}%</span></button>`;
+    }).join('') + '<p class="now">Tap a nation to propose an alliance, end one, or send aid.</p>';
+  }
+
+  function renderDiplomacy() {
+    const me = G.factions[myId];
+    const o = G.factions[sheetNation];
+    if (!o || !o.alive || !me.alive) {
+      // That nation has fallen: back to the list.
+      if (me.alive) openDiplomacyList();
+      else closeBuildSheet();
+      return;
+    }
+    const ally = isAlly(myId, o.id);
+    const truce = !ally && inTruce(myId, o.id);
+    $('sheet-title').textContent = `🤝 ${o.name}${o.isPlayer ? '' : ` · ${levelLabel(o.level || settings.difficulty)} AI`}`;
+    const status = ally ? '🤝 Your ally' : truce ? `⏸ Ceasefire: war resumes in ${Math.ceil(G.truce[pair(myId, o.id)] - G.time)}s` : 'Not allied';
+    let html = '<button class="secondary small back-btn" data-back="1">‹ All nations</button>'
+      + `<p class="now">${status} · ${fmt(o.troops)} troops · ${(o.cells / G.landCells * 100).toFixed(1)}% of the land</p>`;
+    if (!o.isPlayer) {
+      const r = relOf(o.id, myId);
+      const label = relLabel(r);
+      html += `<div class="meter"><div class="meter-bar"><span style="left:${(r + 100) / 2}%"></span></div>`
+        + `<p class="now">How ${o.name} feels about you: <b class="rel-${label.toLowerCase()}">${label}</b> (${r > 0 ? '+' : ''}${Math.round(r)})</p></div>`;
+    }
+    const btn = (attrs, icon, title, sub, side, off) => `<button ${attrs} ${off ? 'disabled' : ''}><span class="bi">${icon}</span>`
+      + `<span class="bt"><b>${title}</b><small>${sub}</small></span><span class="bc">${side}</span></button>`;
+    if (ally) {
+      html += btn(`data-dip="break" data-to="${o.id}"`, '💔', 'End the alliance',
+        `A ${TRUCE_TIME}s ceasefire follows. Attacking an ally instead is a betrayal everyone remembers`, '', false);
+    } else if (!truce) {
+      const wait = G.propAt[pair(myId, o.id)] - G.time;
+      html += btn(`data-dip="propose" data-to="${o.id}"`, '🤝', 'Propose an alliance',
+        o.isPlayer ? 'They will be asked to accept' : 'They answer straight away', wait > 0 ? `${Math.ceil(wait)}s` : '', wait > 0);
+    }
+    html += '<p class="now">Send aid. It builds trust, even with rivals:</p><div class="aid-row">'
+      + [10, 25, 50].map((p) => `<button data-aid="gold" data-to="${o.id}" data-pct="${p}" ${me.gold < 1 ? 'disabled' : ''}>`
+        + `💰 ${p}%<small>${fmt(me.gold * p / 100)} gold</small></button>`).join('')
+      + '</div><div class="aid-row">'
+      + [10, 25, 50].map((p) => `<button data-aid="troops" data-to="${o.id}" data-pct="${p}" ${me.troops < 2 ? 'disabled' : ''}>`
+        + `🪖 ${p}%<small>${fmt(me.troops * p / 100)} troops</small></button>`).join('')
+      + '</div>';
+    listOut.html = html;
+  }
+
   function renderBuildSheet() {
+    if (sheetMode === 'diplo') {
+      renderDiplomacy();
+      return;
+    }
+    if (sheetMode === 'diplist') {
+      renderDiplomacyList();
+      return;
+    }
+    if (sheetMode === 'deposit') {
+      renderDepositSheet();
+      return;
+    }
     const me = G.factions[myId];
     const b = sheetBuilding && G.buildings.get(sheetBuilding);
     if (sheetBuilding && (!b || b.owner !== myId)) {
@@ -4370,7 +4952,7 @@
     }
     if (sheetMode === 'air' && !b) {
       $('sheet-title').textContent = '✈ Air operations';
-      $('build-list').innerHTML = `<button data-air="para"><span class="bi">🪂</span><span class="bt"><b>Paradrop</b>`
+      listOut.html = `<button data-air="para"><span class="bi">🪂</span><span class="bt"><b>Paradrop</b>`
         + `<small>Drop ${settings.pct}% of your troops on land in range</small></span><span class="bc">Free</span></button>`
         + `<button data-air="strike" ${me.gold < STRIKE_COST ? 'disabled' : ''}><span class="bi">💣</span><span class="bt"><b>Air strike</b>`
         + `<small>Carpet-bomb an area or enemy ships: kills troops, wrecks buildings, sinks boats</small></span><span class="bc">${STRIKE_COST}g</span></button>`
@@ -4417,11 +4999,11 @@
         }
         html += '<p class="now">Tap one of your ships, then tap the sea to send it there.</p>';
       }
-      $('build-list').innerHTML = html;
+      listOut.html = html;
       return;
     }
     $('sheet-title').textContent = 'Build';
-    $('build-list').innerHTML = BUILD_ORDER.map((type) => {
+    listOut.html = BUILD_ORDER.map((type) => {
       const info = BUILDINGS[type];
       const cost = costOf(me, type);
       return `<button data-type="${type}" ${me.gold < cost ? 'disabled' : ''}>`
@@ -4456,6 +5038,7 @@
 
   function closeBuildSheet() {
     sheetBuilding = null;
+    listCache = null;
     $('build-sheet').classList.remove('show');
   }
 
@@ -4630,12 +5213,136 @@
   });
 
   $('btn-play').addEventListener('click', () => newGame(false));
+  $('btn-tutorial').addEventListener('click', startTutorial);
   $('btn-again').addEventListener('click', () => newGame(false));
   $('btn-restart').addEventListener('click', () => newGame(false));
   $('btn-watch').addEventListener('click', () => $('over').classList.remove('show'));
 
+  // ---------- Tutorial ----------
+  //
+  // A gentle game against one easy AI, one step at a time. Each step is
+  // ticked off when the player has done it (or skipped).
+
+  const TUTORIAL = [
+    { text: '<b>Welcome to Pixel War!</b> Tap a country on the map to lead it.', done: (me) => me.capital >= 0 },
+    {
+      text: 'Tap <b>empty land</b> next to your country to expand. The <b>Send</b> slider at the bottom sets how many troops go.',
+      // Land actually captured (your starting land fills in by itself).
+      start: (me) => ({ land: me.stats.land }),
+      done: (me, st) => me.stats.land >= st.land + 120,
+    },
+    {
+      text: 'The <b>yellow dots</b> are gold deposits. Expand onto one, then <b>tap the dot</b> to build a gold mine.',
+      gold: (me) => costOf(me, 'mine'),
+      done: (me) => me.built.mine > 0,
+    },
+    {
+      text: 'Tap <b>🏗️ Build</b>, choose <b>City</b>, then tap your land. Cities let you hold far more troops.',
+      gold: (me) => costOf(me, 'city'),
+      done: (me) => me.built.city > 0,
+    },
+    {
+      text: '<b>Tap one of your buildings</b> to open it, then tap <b>Upgrade</b>.',
+      gold: () => 600,
+      done: (me) => [...G.buildings.values()].some((b) => b.owner === me.id && b.level >= 2),
+    },
+    {
+      text: 'Build a <b>🛡️ Fort</b> near your border. Land around a fort is far harder to invade, and two forts can be joined by a wall.',
+      gold: (me) => costOf(me, 'fort'),
+      done: (me) => me.built.fort > 0,
+    },
+    {
+      text: 'Time for war! <b>Tap another nation\'s land</b> to attack it. Not next to anyone yet? Expand towards them first, '
+        + 'or attack across water: your troops sail there by boat ⛵.',
+      // Any attack on a nation launched during this step.
+      start: () => ({ attacked: false }),
+      done: (me, st) => st.attacked,
+    },
+    {
+      text: 'Tap <b>🤝 Diplomacy</b>, pick a nation, and <b>send aid</b> or <b>propose an alliance</b>. Aid builds trust.',
+      done: (me) => me.stats.aidGold + me.stats.aidTroops + me.stats.allies > 0,
+    },
+    {
+      text: 'Big weapons! Tap <b>🏗️ Build</b> and build an <b>✈️ Airfield</b> or a <b>☢️ Nuclear silo</b>.',
+      gold: (me) => Math.max(costOf(me, 'silo'), costOf(me, 'airfield')),
+      done: (me) => me.built.airfield > 0 || me.built.silo > 0,
+    },
+    {
+      text: 'Now use it: tap <b>✈ Air</b> and pick <b>Air strike</b>, then tap enemy land inside the dashed circle, '
+        + 'or tap <b>☢</b> and tap anywhere on an enemy to nuke it.',
+      gold: () => NUKE_COST + STRIKE_COST,
+      done: (me) => me.stats.nukes + me.stats.strikes + me.stats.paras > 0,
+    },
+    {
+      text: '<b>You\'re ready!</b> Carry on conquering here, or start a real game from the main menu. <b>How to play</b> on the menu has the full rules.',
+      final: true,
+    },
+  ];
+
+  function startTutorial() {
+    const saved = { map: settings.map, opponents: settings.opponents, allies: settings.allies, difficulty: settings.difficulty };
+    // Three easy rivals, so one is usually close enough to fight.
+    Object.assign(settings, { map: 'europe', opponents: 3, allies: 0, difficulty: 'easy' });
+    newGame(false);
+    Object.assign(settings, saved);
+    G.tutorial = { step: -1 };
+    document.body.classList.add('tutorial');
+    tutorialStep(0);
+  }
+
+  function tutorialStep(k) {
+    const t = G && G.tutorial;
+    if (!t) return;
+    t.step = k;
+    t.doneAt = 0;
+    const step = TUTORIAL[k];
+    const me = G.factions[myId];
+    t.state = step.start ? step.start(me) : {};
+    $('tut-step').textContent = step.final ? '🎓 Tutorial complete' : `🎓 Step ${k + 1} of ${TUTORIAL.length - 1}`;
+    $('tut-text').innerHTML = step.text;
+    // Choosing a country can't be skipped: nothing else works without one.
+    $('btn-tut-skip').classList.toggle('hidden', !!step.final || k === 0);
+    $('btn-tut-end').textContent = step.final ? 'Finish' : 'End tutorial';
+    $('tut').classList.remove('done');
+  }
+
+  function endTutorial() {
+    if (G) G.tutorial = null;
+    document.body.classList.remove('tutorial');
+  }
+
+  // Each frame: hold the AI back until it's time to fight, top up gold the
+  // step needs, and tick the step off once it's done.
+  function tutorialTick() {
+    const t = G && G.tutorial;
+    if (!t || G.state === 'over') return;
+    const me = G.factions[myId];
+    const step = TUTORIAL[t.step];
+    const warAt = TUTORIAL.findIndex((s) => s.text.startsWith('Time for war'));
+    if (t.step < warAt) for (const f of G.factions) if (!f.isPlayer) f.nextThink = Math.max(f.nextThink, G.time + 1);
+    if (me.alive && me.troops < 50) me.troops = 50;
+    if (step.final || G.state !== 'play' && t.step > 0) return;
+    if (step.gold && me.capital >= 0) me.gold = Math.max(me.gold, step.gold(me) + 20);
+    if (t.doneAt) {
+      if (performance.now() - t.doneAt > 1200) tutorialStep(t.step + 1);
+      return;
+    }
+    if (step.done(me, t.state)) {
+      t.doneAt = performance.now();
+      $('tut').classList.add('done');
+      $('tut-step').textContent = '✓ Done!';
+      sfx('upgrade');
+    }
+  }
+
+  $('btn-tut-skip').addEventListener('click', () => {
+    if (G && G.tutorial && !TUTORIAL[G.tutorial.step].final) tutorialStep(G.tutorial.step + 1);
+  });
+  $('btn-tut-end').addEventListener('click', endTutorial);
+
   function toMenu() {
     netLeave();
+    endTutorial();
     $('over').classList.remove('show');
     syncMenu();
     newGame(true);
@@ -4658,6 +5365,15 @@
     else openBuildSheet();
   });
   $('btn-build-close').addEventListener('click', closeBuildSheet);
+  $('btn-diplo').addEventListener('click', () => {
+    if (!G || G.state !== 'play') return;
+    if ($('build-sheet').classList.contains('show') && (sheetMode === 'diplist' || sheetMode === 'diplo')) closeBuildSheet();
+    else openDiplomacyList();
+  });
+  $('board').addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-fid]');
+    if (li) openDiplomacy(Number(li.dataset.fid));
+  });
   $('build-list').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.disabled || !G) return;
@@ -4673,6 +5389,31 @@
     }
     if (b.dataset.ship) {
       perform({ a: 'ship', id: Number(b.dataset.yard), kind: b.dataset.ship }, () => renderBuildSheet());
+      return;
+    }
+    if (b.dataset.mine) {
+      perform({ a: 'build', building: 'mine', cell: Number(b.dataset.mine) }, (res) => {
+        if (res.ok) closeBuildSheet();
+      });
+      return;
+    }
+    if (b.dataset.nation) {
+      openDiplomacy(Number(b.dataset.nation));
+      return;
+    }
+    if (b.dataset.back) {
+      openDiplomacyList();
+      return;
+    }
+    if (b.dataset.dip) {
+      const to = Number(b.dataset.to);
+      // A joiner shows the cooldown straight away (the host keeps the real one).
+      if (b.dataset.dip === 'propose' && net.role === 'client') G.propAt[pair(myId, to)] = G.time + PROPOSE_GAP;
+      perform({ a: b.dataset.dip, to }, () => renderBuildSheet());
+      return;
+    }
+    if (b.dataset.aid) {
+      perform({ a: 'aid', to: Number(b.dataset.to), kind: b.dataset.aid, pct: Number(b.dataset.pct) }, () => renderBuildSheet());
       return;
     }
     if (b.dataset.wall) {
@@ -5309,6 +6050,7 @@
     }
     clearTracking();
     net.sentBver = G.bver;
+    net.sentDver = G.dver;
     setTimeout(() => {
       for (const p of net.conns.values()) {
         if (p.fid >= 0 && !p.loaded) toast(`${p.name} hasn't finished loading. Their connection may be struggling`);
@@ -5328,6 +6070,8 @@
   }
 
   function snapshot(full) {
+    const statsDue = full || G.state === 'over' || G.time - (net.statAt ?? -9) >= 2;
+    if (statsDue) net.statAt = G.time;
     const cells = [];
     if (!full) for (const i of G.changed) cells.push(i, G.owner[i]);
     const rad = [];
@@ -5341,8 +6085,12 @@
       cells,
       rad: full ? rad : G.radEvents,
       nukes: full ? [] : G.nukeEvents,
-      st: full || G.state === 'over' || G.time - (net.statAt ?? -9) >= 2
-        ? ((net.statAt = G.time), G.factions.map((f) => STATS.map(([k]) => Math.round(f.stats[k])))) : null,
+      st: statsDue ? G.factions.map((f) => STATS.map(([k]) => Math.round(f.stats[k]))) : null,
+      rel: statsDue ? Array.from(G.rel, Math.round) : null,
+      dip: full || G.dver !== net.sentDver ? {
+        a: [...G.ally.keys()].filter((k) => G.ally[k]),
+        t: [...G.truce.keys()].filter((k) => G.truce[k] > G.time).map((k) => [k, Math.round((G.truce[k] - G.time) * 10) / 10]),
+      } : null,
       f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
         Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
       b: full || G.bver !== net.sentBver
@@ -5387,6 +6135,7 @@
         p.conn.send(snap);
       }
       net.sentBver = G.bver;
+      net.sentDver = G.dver;
     }
     clearTracking();
   }
@@ -5682,6 +6431,13 @@
       }
     }
     if (s.walls) G.walls = s.walls.map(([id, a, b, owner, path]) => ({ id, a, b, owner, path }));
+    if (s.rel) G.rel.set(s.rel.slice(0, G.rel.length));
+    if (s.dip) {
+      G.ally.fill(0);
+      for (const k of s.dip.a) G.ally[k] = 1;
+      G.truce.fill(0);
+      for (const [k, left] of s.dip.t) G.truce[k] = G.time + left;
+    }
     // Keep each boat's and ship's drawn position so it can glide to the new one.
     const oldBoats = new Map(G.boats.map((b) => [b.id, b]));
     G.boats = s.boats.map(([id, owner, x, y, troops]) => {

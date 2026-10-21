@@ -89,6 +89,18 @@ out the land under a standing wall: the wall absorbs them. A nuke landing on
 the wall line does destroy it, as does losing either fort (artillery can
 still wear a fort down) or any of the land under the wall.
 
+**🎓 Tutorial:** new players can tap **Tutorial** on the main menu for a
+gentle game on the Europe map against three easy rivals, one step at a time:
+choose a country, expand, build a gold mine and a city, upgrade, build a
+fort, go to war, try diplomacy, and use an air strike or nuke. Each step
+ticks itself off when done (or can be skipped), gold is topped up when a
+step needs it, the rivals stay quiet until it's time to fight, and tutorial
+games don't count towards your record.
+
+**Quick taps:** tap a gold dot on your own land to build a gold mine right
+there. Building icons can be tapped anywhere on the icon, however far you're
+zoomed out.
+
 **Upgrades:** tap one of your buildings to see what it does now and what the
 next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
 base price and level 3 costs 2.4×. A small badge on the map shows a
@@ -185,6 +197,34 @@ Difficulty changes how fast rivals earn troops and gold (Easy ×0.54, Normal
 keen they are to target you. AI nations build and upgrade mines, cities, forts and artillery, and send
 boats overseas. On Normal the more aggressive ones build nuclear silos. On Hard
 most of them do. On Easy, no AI builds a silo.
+
+**🤝 Diplomacy:** tap **🤝 Diplomacy** at the bottom of the screen for a
+list of every nation (how each AI feels about you, who's your ally, any
+ceasefire), then tap a nation for its panel. Tapping a nation on the
+leaderboard is a shortcut.
+- **Alliances:** propose one. An AI answers straight away (and says why if
+  it declines); another player gets an Accept/Decline pop-up. Allies can't
+  be attacked, shelled, invaded or nuked, and AI allies leave you alone.
+  Teams set in the lobby (and single-player allies) simply start allied.
+- **Ending an alliance** from the panel gives both sides a 15-second
+  ceasefire. Attacking an ally instead is a **betrayal**: the first tap only
+  warns you, a second tap within a few seconds attacks. The alliance ends at
+  once with no ceasefire, the victim never trusts you again, and every other
+  nation trusts you less. A nuke, Tsar Bomba or air strike counts as an
+  attack on an ally only if over 75% of the land in its blast is theirs.
+  Less than that is a splash: the first time, they warn you; a second
+  splash within 3 minutes ends the alliance as a betrayal.
+- **Aid:** send any nation 10%, 25% or 50% of your gold or troops (troops up
+  to what they have room for). It builds trust, even with rivals.
+- **The relations meter** shows how an AI nation feels about you, from
+  Hostile to Trusted. Aid, fighting a common enemy and time at peace raise
+  it; attacks, bombing and betrayals lower it, and a nation holding over 30%
+  of the land makes everyone wary. AIs only ally with nations they like
+  enough (Turtles more readily, Aggressors and Hard AIs less), make and break
+  alliances among themselves, gang up on a runaway leader and pick on nations
+  they hate. An AI won't sign an alliance that would end the war outright.
+- **Victory** comes when everyone left is allied with everyone else: the
+  alliance shares the win.
 
 **Match statistics:** the end-of-game screen shows your own numbers (troops
 raised, land captured, buildings built, shells fired, nukes and Tsar Bombas

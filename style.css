@@ -507,3 +507,119 @@ button.lvl-b { cursor: pointer; }
 
 .build-list { max-height: calc(100vh - 260px); overflow-y: auto; }
 #over .panel { max-width: 460px; }
+
+/* ---------- Diplomacy ---------- */
+
+/* Leaderboard rows open a nation's diplomacy panel. */
+#board li { pointer-events: auto; cursor: pointer; padding: 3px 0; }
+
+/* How an AI nation feels about you, from hostile (left) to trusted. */
+.meter { margin: 2px 0 4px; }
+.meter-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #dc2626, #f97316 25%, #a3a3a3 50%, #84cc16 75%, #16a34a);
+}
+.meter-bar span {
+  position: absolute;
+  top: -3px;
+  width: 6px;
+  height: 16px;
+  margin-left: -3px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+.rel-hostile { color: #f87171; }
+.rel-wary { color: #fb923c; }
+.rel-neutral { color: #d4d4d4; }
+.rel-friendly { color: #a3e635; }
+.rel-trusted { color: #4ade80; }
+
+.aid-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.aid-row button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  font-weight: 700;
+}
+.aid-row small { font-weight: 500; color: var(--muted); font-size: 11px; }
+
+/* An alliance offer from another nation. */
+.offer {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 70px);
+  transform: translate(-50%, -20px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 8;
+  width: min(92vw, 340px);
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.offer.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.offer p { margin: 0 0 10px; font-weight: 700; }
+.offer-row { display: flex; gap: 8px; justify-content: center; }
+.offer-row button,
+.offer-row button.small {
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+.offer-row .secondary { border-color: var(--panel-edge); }
+
+/* The diplomacy button shows just its icon on narrow phones. */
+@media (max-width: 520px) { #btn-diplo .lbl { display: none; } }
+
+/* The list of nations in the diplomacy menu. */
+.nation-row .bi .sw { display: inline-block; width: 18px; height: 18px; border-radius: 4px; }
+.nation-row .bc { color: var(--muted); }
+.back-btn { align-self: flex-start; padding: 6px 10px; font-size: 13px; }
+
+/* On narrow phones the hint gets its own line under the buttons, so it isn't
+   squeezed to a few letters. */
+@media (max-width: 520px) {
+  .action-row { flex-wrap: wrap; row-gap: 6px; }
+  .hint { flex: 1 0 100%; order: 10; }
+  .sheet { bottom: calc(env(safe-area-inset-bottom) + 126px); }
+}
+
+/* ---------- Tutorial ---------- */
+
+.tut {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 62px);
+  transform: translateX(-50%);
+  z-index: 7;
+  width: min(92vw, 380px);
+  padding: 10px 14px 12px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(96, 165, 250, 0.6);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  display: none;
+}
+body.tutorial[data-state='play'] .tut,
+body.tutorial[data-state='spawn'] .tut { display: block; }
+body.tutorial #board { display: none; }
+.tut p { margin: 0 0 8px; font-size: 14px; line-height: 1.35; }
+.tut .tut-step { margin-bottom: 4px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; color: #93c5fd; text-transform: uppercase; }
+.tut.done { border-color: rgba(74, 222, 128, 0.8); }
+.tut-row { display: flex; gap: 8px; }
+.tut-row button { flex: 1 1 0; }
