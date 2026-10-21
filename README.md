@@ -45,17 +45,48 @@ They must sit at least two cells apart. Captured buildings change hands.
 | --- | --- | --- | --- | --- |
 | 🏙️ City | 250 | +3,000 troop cap, +8 troops/s, +3 gold/s | +6,000 cap, +16 troops/s, +6 gold/s | +10,000 cap, +28 troops/s, +10 gold/s |
 | ⛏️ Gold mine | 120 | +4 gold/s | +7 gold/s | +11 gold/s |
-| 🛡️ Fort | 180 | Land within 8 cells 4× harder to take | 11 cells, 6× | 14 cells, 8× |
+| 🛡️ Fort | 180 | Land within 8 cells 6× harder to take; holds a siege 2 s | 11 cells, 10×; 4 s | 14 cells, 15×; 6 s |
 | 🎯 Artillery | 350 | Range 22, fires every 3.5 s | Range 28, every 2.4 s | Range 34, every 1.5 s, bigger blast |
+| 🌊 Coastal battery | 400 | On the coast only; shells troop boats within 16 cells, one every 1.5 s, killing 20% aboard | 20 cells, every 1.1 s, 25% | 26 cells, every 0.9 s, 30% |
 | ⚔️ Barracks | 300 | Your attacks cost 15% fewer troops | 25% | 35% |
 | 📡 SAM site | 600 | Shoots down enemy nukes within 16 cells, every 20 s | 22 cells, 14 s | 28 cells, 9 s |
 | 🚢 Shipyard | 450 | On the coast only; up to 2 warships | Up to 4 | Up to 6 (8 per nation in total) |
 | ✈️ Airfield | 500 | Paradrops up to 80 cells away, every 25 s | 120 cells, 18 s | 170 cells, 12 s |
 | ☢️ Nuclear silo | 1,200 | Nuke blast radius 7, 30 s reload | Radius 10, 20 s reload | Radius 13, 12 s reload; unlocks the Tsar Bomba |
 
-Gold mines only go on gold deposits (the yellow dots). Defenders inside a
-fort's range also lose only half as many troops when land there falls, and
-forts take 6 artillery hits to destroy (7 at level 2, 8 at level 3).
+**🌊 Coastal batteries** guard your shores against invasion. They fire one
+shell at a time; each shell tracks its target and kills a share of the troops
+aboard (boats sailing right alongside are caught in the blast too). A boat
+that has lost most of its troops sinks, and shells already in the air still
+land as a boat reaches the beach. Each battery picks a boat the others
+aren't already shooting at, so a line of batteries can stop a whole
+invasion fleet, while a single one only thins it out. With no boats about, they
+shell enemy warships instead. Troop boats sail a little slower than they
+used to, giving batteries and warships time to react.
+
+Gold mines only go on gold deposits (the yellow dots). Forts make an
+invasion a slog: inside a fort's range the attack line stalls on most ticks
+(2× slower at level 1, 3× at level 2, 5× at level 3), invaders keep losing
+troops while they're held up, and the fort itself has to be besieged for 2,
+4 or 6 seconds before it falls. Defenders there also lose only half as many
+troops when land falls, and forts take 6 artillery hits to destroy (7 at
+level 2, 8 at level 3). A level 3 fort usually needs about five times the
+defenders' troops, or a nuke, to break.
+
+**🧱 Walls:** tap one of your forts to see your other forts within 40 cells
+(scaled to the map) and wall them together (400 gold). The wall runs the
+shortest way through your own land, curving with your border rather than
+crossing enemy or unclaimed land, so only forts joined by your land can be
+walled. Two walled forts act
+as one big fort: land along the wall, out to the weaker fort's range, is
+defended as if it were inside a fort. Each fort can have two walls, so you
+can build a chain along a border. Walls are as tough as forts: to break
+through, invaders must besiege the wall line just like a fort (2, 4 or 6
+seconds by level), and the siege only progresses while they outnumber the
+defenders 1.5×, 2× or 3× (the same goes for the forts themselves). An
+overwhelmed wall is breached and comes down. A nuke, bomb or shell landing
+on the wall line also destroys it, as does losing either fort or any of
+the land under the wall.
 
 **Upgrades:** tap one of your buildings to see what it does now and what the
 next level adds, then tap **Upgrade**. Level 2 costs 1.2× the building's
@@ -115,9 +146,16 @@ fires from your best ready silo (highest level, then nearest the target),
 and its blast size and reload depend on that silo's level. The ☢ button
 shows how many silos are ready (for example ×2). The missile takes three seconds to
 arrive and everyone can see where it will land. It wipes out troops,
-buildings and ownership within its blast radius. The land stays irradiated
-(green) for about 45 seconds, and while it does it costs 4× as many troops
-to take.
+buildings and ownership within its blast radius, and kills at least 10% of
+the whole nation's troops (25% for the Tsar Bomba), more the more of its land
+is destroyed, up to 85%. The land stays irradiated (green) for about 45
+seconds, and while it does it costs 4× as many troops to take.
+
+**Moving in after a strike:** land knocked out by a nuke, bomb or shell
+can't be retaken by its old owner for a while (30 s after a nuke, 45 s after
+a Tsar Bomba, 15 s after an air strike, 8 s after a shell), so the attacker
+has the chance to move in first. Air strikes and shells also kill a share of
+the target nation's troops with every hit.
 
 **Sound and music:** the game plays synthesised sound effects and an
 adaptive 8-bit chiptune soundtrack, all generated live with no audio files.
@@ -141,8 +179,8 @@ nuke, and otherwise pauses the game instead of leaving it.
 Each rival gets a personality. Every game includes a **Warlord** (very
 aggressive), a **Balanced** rival and a **Turtle** (saves up, expands slowly).
 With four or five opponents, a **Raider** and a **Settler** join in.
-Difficulty changes how fast rivals earn troops and gold (Easy ×0.64, Normal
-×0.8, Hard ×0.96 of a human player's rate), how aggressive they are, and how
+Difficulty changes how fast rivals earn troops and gold (Easy ×0.54, Normal
+×0.68, Hard ×0.82 of a human player's rate), how aggressive they are, and how
 keen they are to target you. AI nations build and upgrade mines, cities, forts and artillery, and send
 boats overseas. On Normal the more aggressive ones build nuclear silos. On Hard
 most of them do. On Easy, no AI builds a silo.

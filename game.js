@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.3';
+  const APP_VERSION = '1.9.4';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -34,14 +34,40 @@
   const CITY_GOLD = [3, 6, 10];
   const MINE_GOLD = [4, 7, 11];
   const FORT_RADIUS = [8, 11, 14];
-  const FORT_MULT = [4, 6, 8];
+  const FORT_MULT = [6, 10, 15];
   const FORT_SHIELD = 0.5;        // defenders inside fort range lose half as many troops
+  const FORT_SLOW = [0.5, 0.65, 0.8];        // chance a fort line holds out each tick
+  const FORT_SIEGE = [2, 4, 6];              // seconds a fort holds under attack before it falls
+  const SIEGE_ODDS = [1.5, 2, 3];            // attackers needed, per defender, to besiege a fort or wall
+  // Walls join two of your forts into one fortified line.
+  const WALL_MAX = 40;            // furthest apart two walled forts can be (cells)
+  const WALL_COST = 400;
+  const WALLS_PER_FORT = 2;
+  const FORT_ATTRITION = [0.003, 0.0045, 0.006]; // share of an attack lost per tick at a fort line
+  // After a blast, the land's old owner can't retake it for a while, giving
+  // the attacker the chance to move in.
+  const NUKE_LOCK = 30;
+  const TSAR_LOCK = 45;
+  const BOMB_LOCK = 15;
+  const SHELL_LOCK = 8;
+  // Share of a nation's troops killed by each hit (besides those on the land).
+  const NUKE_KILL = 0.1;
+  const TSAR_KILL = 0.25;
+  const BOMB_KILL = 0.015;
+  const SHELL_KILL = 0.0025;
   const RAD_MULT = 4;             // irradiated land is this much harder to take
   const RAD_TIME = 45;
   const ART_RANGE = [22, 28, 34];
   const ART_RELOAD = [3.5, 2.4, 1.5];
   const ART_BLAST = [1, 1, 2];
   const SHELL_TIME = 1.2;
+  // Coastal batteries shell enemy troop boats (and warships) offshore.
+  const COAST_RANGE = [16, 20, 26];
+  const COAST_RELOAD = [1.5, 1.1, 0.9];     // seconds between shells
+  const COAST_SPLASH = 1.5;                  // boats this close to the one hit are hit too
+  const COAST_KILL = [0.2, 0.25, 0.3];       // share of a boat's troops killed per hit
+  const COAST_SINK = 0.35;                   // a boat sinks once fewer than this share of its troops are left
+  const COAST_SHELL_TIME = 0.5;
   const NUKE_COST = 900;
   const NUKE_RADIUS = [7, 10, 13];
   const NUKE_TIME = 3;
@@ -76,7 +102,7 @@
   // Supply drops appear on unclaimed land.
   const CRATE_MAX = 4;
   const CRATE_GOLD = 600;
-  const BOAT_SPEED = 14;          // cells per second
+  const BOAT_SPEED = 10;          // cells per second
   const MAX_BOATS = 3;
   const DEPOSIT_EVERY = 300;      // land cells per gold deposit
   const TINY_ISLAND = 5;          // islands smaller than this many cells are removed
@@ -134,9 +160,10 @@
   // AI nations' troop and gold income, aggression and how keen they are to
   // pick on human players (eased by about 20% after play-testing).
   const DIFFICULTY = {
-    easy: { income: 0.64, aggr: -0.25, playerBias: 0.65, siloAggr: Infinity },
-    normal: { income: 0.8, aggr: -0.1, playerBias: 0.8, siloAggr: 0.65 },
-    hard: { income: 0.96, aggr: 0.05, playerBias: 1.05, siloAggr: 0.45 },
+    // AI growth and how much they pick on players, all eased by 15%.
+    easy: { income: 0.64 * 0.85, aggr: -0.25, playerBias: 0.65 * 0.85, siloAggr: Infinity },
+    normal: { income: 0.8 * 0.85, aggr: -0.1, playerBias: 0.8 * 0.85, siloAggr: 0.65 },
+    hard: { income: 0.96 * 0.85, aggr: 0.05, playerBias: 1.05 * 0.85, siloAggr: 0.45 },
   };
 
   // stats(level) describes what a building does at a given level (1-3).
@@ -151,7 +178,9 @@
     },
     fort: {
       label: 'Fort', icon: '🛡️', cost: 180, step: 1.3, hp: 6,
-      stats: (l) => `Land within ${FORT_RADIUS[l - 1]} cells is ${FORT_MULT[l - 1]}× harder to take, and defenders there lose half as many troops`,
+      stats: (l) => `Land within ${FORT_RADIUS[l - 1]} cells is ${FORT_MULT[l - 1]}× harder to take, invaders advance `
+        + `${Math.round(1 / (1 - FORT_SLOW[l - 1]))}× slower and keep losing troops, the fort holds out ${FORT_SIEGE[l - 1]}s under siege, `
+        + 'and defenders there lose half as many troops',
     },
     artillery: {
       label: 'Artillery', icon: '🎯', cost: 350, step: 1.35, hp: 2,
@@ -174,6 +203,12 @@
       label: 'Shipyard', icon: '🚢', cost: 450, step: 1.4, hp: 4,
       stats: (l) => `Builds warships (on the coast). Up to ${l * SHIPS_PER_YARD_LEVEL} ships from this yard`,
     },
+    coastal: {
+      label: 'Coastal battery', icon: '🌊', cost: 400, step: 1.35, hp: 3,
+      stats: (l) => `Shells enemy troop boats within ${COAST_RANGE[l - 1]} cells, one every ${COAST_RELOAD[l - 1]}s, `
+        + `killing ${Math.round(COAST_KILL[l - 1] * 100)}% of the troops aboard each boat caught in the blast (badly hit boats sink). `
+        + 'Also hits warships. Build on the coast',
+    },
     barracks: {
       label: 'Barracks', icon: '⚔️', cost: 300, step: 1.5, hp: 3,
       stats: (l) => `Your attacks cost ${Math.round(BARRACKS_DISCOUNT[l - 1] * 100)}% fewer troops`,
@@ -181,7 +216,7 @@
   };
   // Upgrading to level 2 costs 1.2× the base price, to level 3 2.4×.
   const UPGRADE_MULT = [0, 1.2, 2.4];
-  const BUILD_ORDER = ['city', 'mine', 'fort', 'barracks', 'artillery', 'sam', 'airfield', 'shipyard', 'silo'];
+  const BUILD_ORDER = ['city', 'mine', 'fort', 'barracks', 'artillery', 'coastal', 'sam', 'airfield', 'shipyard', 'silo'];
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('map');
@@ -532,6 +567,8 @@
       shade: new Float32Array(n),
       rad: new Float32Array(n),
       radList: [],
+      lockBy: new Int16Array(n).fill(-1),
+      lockUntil: new Float32Array(n),
       bAt: new Int32Array(n).fill(-1),
       buildings: new Map(),
       nextBid: 1,
@@ -546,6 +583,8 @@
       fx: [],
       planes: [],
       ships: [],
+      walls: [],
+      nextWallId: 1,
       nextShipId: 1,
       crates: [],
       nextCrate: 25,
@@ -591,7 +630,7 @@
       alive: true,
       troops: sc2(START_TROOPS),
       gold: START_GOLD,
-      built: { city: 0, mine: 0, fort: 0, artillery: 0, silo: 0, sam: 0, airfield: 0, barracks: 0, shipyard: 0 },
+      built: { city: 0, mine: 0, fort: 0, artillery: 0, silo: 0, sam: 0, airfield: 0, barracks: 0, shipyard: 0, coastal: 0 },
       nextTsar: 0,
       cells: 0,
       sx: 0,
@@ -843,6 +882,7 @@
     if (G.rad[i] > 0) return 'That land is irradiated';
     if (type === 'mine' && !G.deposit[i]) return 'Gold mines go on a gold deposit';
     if (type === 'shipyard' && waterNear(i, 1) < 0) return 'Shipyards go on the coast';
+    if (type === 'coastal' && waterNear(i, 1) < 0) return 'Coastal batteries go on the coast';
     if (type !== 'mine' && G.deposit[i]) return 'Save gold deposits for mines';
     const x0 = cx(i);
     const y0 = cy(i);
@@ -947,16 +987,250 @@
     addFx(b.cell, 2.5, '255,170,60', 600);
   }
 
-  // Strongest fort multiplier covering cell i for faction fid (1 if none).
-  function fortMult(i, fid) {
-    let m = 1;
+  // Level of the strongest fort of faction fid covering cell i (0 if none).
+  function fortLevel(i, fid) {
+    let lvl = 0;
     for (const b of G.buildings.values()) {
-      if (b.type === 'fort' && b.owner === fid && cellDist(b.cell, i) <= sc(FORT_RADIUS[b.level - 1])) {
-        m = Math.max(m, FORT_MULT[b.level - 1]);
+      if (b.type === 'fort' && b.owner === fid && b.level > lvl && cellDist(b.cell, i) <= sc(FORT_RADIUS[b.level - 1])) {
+        lvl = b.level;
       }
     }
-    return m;
+    // Two walled forts act as one long fort: land along the wall, out to
+    // the weaker fort's range, is defended like that fort's own land.
+    for (const w of G.walls) {
+      if (w.owner !== fid) continue;
+      const wl = wallLevel(w);
+      if (wl > lvl && pathDist(i, w.path) <= sc(FORT_RADIUS[wl - 1])) lvl = wl;
+    }
+    return lvl;
   }
+
+  // Distance from cell i to a wall's route (a list of corner cells).
+  function pathDist(i, path) {
+    let d = Infinity;
+    for (let k = 1; k < path.length; k++) d = Math.min(d, segDist(i, path[k - 1], path[k]));
+    return d;
+  }
+
+  // A wall's route between two forts through the owner's own land. It hugs
+  // the edge of that land (coast or border) wherever it can, so it never
+  // crosses enemy or unclaimed land and follows the shoreline. Returns every
+  // cell on it, or null if the forts aren't joined by our land within reach.
+  function wallRoute(fid, from, to) {
+    const limit = sc(WALL_MAX) * 2;
+    const edge = (c) => {
+      const x = cx(c);
+      const y = cy(c);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = wx(x + dx);
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= G.gw || ny >= G.gh) return true;
+          if (G.owner[ny * G.gw + nx] !== fid) return true;
+        }
+      }
+      return false;
+    };
+    // Dijkstra with a small binary heap: edge cells cost 1, inland cells 4.
+    const dist = new Map([[from, 0]]);
+    const prev = new Map([[from, -1]]);
+    const heap = [[0, from]];
+    const push = (item) => {
+      heap.push(item);
+      for (let k = heap.length - 1; k > 0;) {
+        const up = (k - 1) >> 1;
+        if (heap[up][0] <= heap[k][0]) break;
+        [heap[up], heap[k]] = [heap[k], heap[up]];
+        k = up;
+      }
+    };
+    const pop = () => {
+      const top = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        for (let k = 0; ;) {
+          const l = 2 * k + 1;
+          const r = l + 1;
+          let m = k;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === k) break;
+          [heap[m], heap[k]] = [heap[k], heap[m]];
+          k = m;
+        }
+      }
+      return top;
+    };
+    while (heap.length) {
+      const [d, c] = pop();
+      if (d > dist.get(c)) continue;
+      if (c === to) {
+        const path = [];
+        for (let k = to; k >= 0; k = prev.get(k)) path.push(k);
+        path.reverse();
+        return path.length <= limit ? path : null;
+      }
+      const x = cx(c);
+      const y = cy(c);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = wx(x + dx);
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= G.gw || ny >= G.gh) continue;
+          const j = ny * G.gw + nx;
+          if (G.owner[j] !== fid && j !== to) continue;
+          if (cellDist(j, from) > limit || cellDist(j, to) > limit) continue;
+          const nd = d + (edge(j) || j === to ? 1 : 4) * (dx && dy ? 1.41 : 1);
+          if (nd < (dist.has(j) ? dist.get(j) : Infinity)) {
+            dist.set(j, nd);
+            prev.set(j, c);
+            push([nd, j]);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // The corners of a route: drop cells that lie (nearly) on a straight
+  // stretch, so the wall is drawn and measured as a few clean segments.
+  function routeCorners(cells) {
+    const keep = new Array(cells.length).fill(false);
+    keep[0] = keep[cells.length - 1] = true;
+    const split = (lo, hi) => {
+      let worst = -1;
+      let at = -1;
+      for (let k = lo + 1; k < hi; k++) {
+        const d = segDist(cells[k], cells[lo], cells[hi]);
+        if (d > worst) {
+          worst = d;
+          at = k;
+        }
+      }
+      if (worst > 0.75) {
+        keep[at] = true;
+        split(lo, at);
+        split(at, hi);
+      }
+    };
+    split(0, cells.length - 1);
+    return cells.filter((_, k) => keep[k]);
+  }
+
+  // Distance from cell i to the line between cells a and b (wrap-aware).
+  function segDist(i, a, b) {
+    const bx = ddx(b, a);
+    const by = cy(b) - cy(a);
+    const px = ddx(i, a);
+    const py = cy(i) - cy(a);
+    const len2 = bx * bx + by * by || 1;
+    const t = clamp((px * bx + py * by) / len2, 0, 1);
+    return Math.hypot(px - bx * t, py - by * t);
+  }
+
+  // Walls come down when either fort is lost or destroyed, or when any of
+  // the land under them is lost.
+  function pruneWalls() {
+    const before = G.walls.length;
+    G.walls = G.walls.filter((w) => {
+      const a = G.buildings.get(w.a);
+      const b = G.buildings.get(w.b);
+      return a && b && a.owner === w.owner && b.owner === w.owner;
+    });
+    if (G.walls.length !== before) G.bver++;
+    for (const w of [...G.walls]) {
+      const lost = w.cells && w.cells.find((c) => G.owner[c] !== w.owner);
+      if (lost !== undefined) breachWall(w, G.owner[lost], lost);
+    }
+  }
+
+  const wallsOf = (b) => G.walls.filter((w) => w.a === b.id || w.b === b.id);
+
+  function wallLevel(w) {
+    const a = G.buildings.get(w.a);
+    const b = G.buildings.get(w.b);
+    return a && b ? Math.min(a.level, b.level) : 1;
+  }
+
+  // A wall of faction fid running through cell i (on its route).
+  function wallThrough(i, fid) {
+    for (const w of G.walls) {
+      if (w.owner !== fid || w.down) continue;
+      if (w.cellSet ? w.cellSet.has(i) : pathDist(i, w.path) <= 1) return w;
+    }
+    return null;
+  }
+
+  // A wall that is overrun or blasted comes down.
+  function breachWall(w, by, cell) {
+    if (w.down) return;
+    w.down = true;
+    G.walls = G.walls.filter((x) => x !== w);
+    G.bver++;
+    addFx(cell, 4, '255,170,60', 700);
+    announce({ k: 'wallDown', f: w.owner, by });
+  }
+
+  // Our other forts that this fort could be walled to, nearest first, with
+  // the route each wall would take through our land.
+  function wallTargets(b) {
+    return [...G.buildings.values()]
+      .filter((o) => o.type === 'fort' && o.owner === b.owner && o.id !== b.id
+        && cellDist(o.cell, b.cell) <= sc(WALL_MAX)
+        && !G.walls.some((w) => (w.a === b.id && w.b === o.id) || (w.a === o.id && w.b === b.id)))
+      .sort((p, q) => cellDist(p.cell, b.cell) - cellDist(q.cell, b.cell))
+      .map((o) => ({ fort: o, route: wallRoute(b.owner, b.cell, o.cell) }))
+      .filter((t) => t.route);
+  }
+
+  function buildWall(f, fromId, toId) {
+    const a = G.buildings.get(fromId);
+    const b = G.buildings.get(toId);
+    if (!a || !b || a.type !== 'fort' || b.type !== 'fort' || a.owner !== f.id || b.owner !== f.id || a === b) {
+      return 'Walls join two of your forts';
+    }
+    if (cellDist(a.cell, b.cell) > sc(WALL_MAX)) return `Forts must be within ${Math.round(sc(WALL_MAX))} cells to wall`;
+    if (G.walls.some((w) => (w.a === a.id && w.b === b.id) || (w.a === b.id && w.b === a.id))) return 'Those forts are already walled';
+    if (wallsOf(a).length >= WALLS_PER_FORT || wallsOf(b).length >= WALLS_PER_FORT) {
+      return `A fort can have at most ${WALLS_PER_FORT} walls`;
+    }
+    if (f.gold < WALL_COST) return `A wall costs ${WALL_COST} gold`;
+    const cells = wallRoute(f.id, a.cell, b.cell);
+    if (!cells) return 'Your own land must join the two forts';
+    f.gold -= WALL_COST;
+    G.walls.push({
+      id: G.nextWallId++, a: a.id, b: b.id, owner: f.id, cells, cellSet: new Set(cells), path: routeCorners(cells),
+    });
+    G.bver++;
+    return null;
+  }
+
+  // Strongest fort multiplier covering cell i for faction fid (1 if none).
+  function fortMult(i, fid) {
+    const lvl = fortLevel(i, fid);
+    return lvl ? FORT_MULT[lvl - 1] : 1;
+  }
+
+  // A fort under attack holds for a while before it can be taken. The siege
+  // clock restarts if the attackers let up.
+  const overwhelms = (a, level) => a.troops >= G.factions[a.to].troops * SIEGE_ODDS[level - 1];
+
+  function besieged(b, level = b.level) {
+    if (G.time - (b.siegeAt || -Infinity) > 1) b.siegeFrom = G.time;
+    b.siegeAt = G.time;
+    return G.time - b.siegeFrom >= FORT_SIEGE[level - 1];
+  }
+
+  // Blasted land: its old owner can't retake it until the lock runs out.
+  function lockCell(i, fid, secs) {
+    if (fid < 0) return;
+    G.lockBy[i] = fid;
+    G.lockUntil[i] = G.time + secs;
+  }
+
+  const lockedFor = (i, fid) => G.lockBy[i] === fid && G.time < G.lockUntil[i];
 
   // ---------- Simulation ----------
 
@@ -1051,6 +1325,9 @@
       if (ev.by === myId) toast(`📡 Your SAM shot down ${name(ev.f)}'s ${what}!`);
       else if (ev.f === myId) toast(`📡 Your ${what} was shot down by ${name(ev.by)}`);
       else toast(`📡 ${name(ev.by)} shot down ${name(ev.f)}'s ${what}`);
+    } else if (ev.k === 'wallDown') {
+      if (ev.f === myId) toast(`🧱 Your wall has been breached${ev.by >= 0 ? ` by ${name(ev.by)}` : ''}!`);
+      else if (ev.by === myId) toast(`🧱 You broke through ${name(ev.f)}'s wall!`);
     } else if (ev.k === 'planeHome') {
       if (ev.f === myId) toast(`✈ Your ${ev.kind === 'strike' ? 'bomber' : 'plane'} made it home: ready to fly again`);
     } else if (ev.k === 'planeDown') {
@@ -1063,7 +1340,7 @@
       else if (ev.by === myId) toast(`⚓ You sank ${name(ev.f)}'s ${what}!`);
     } else if (ev.k === 'boatSunk') {
       if (ev.f === myId) toast(`⚓ ${name(ev.by)} sank one of your troop boats!`);
-      else if (ev.by === myId) toast(`⚓ Your ${ev.air ? 'bomber' : 'battleship'} sank ${name(ev.f)}'s troop boat`);
+      else if (ev.by === myId) toast(`⚓ Your ${ev.air ? 'bomber' : ev.gun ? 'coastal battery' : 'battleship'} sank ${name(ev.f)}'s troop boat`);
     } else if (ev.k === 'crate') {
       if (ev.f !== myId) return;
       sfx('crate');
@@ -1085,6 +1362,7 @@
   // Take one cell for `atk`, paying from `pool` (an attack or a boat).
   // Returns false if the pool can't afford it.
   function capture(i, atk, pool) {
+    if (lockedFor(i, atk.id)) return false;
     const o = G.owner[i];
     const def = o >= 0 ? G.factions[o] : null;
     const density = def ? def.troops / Math.max(1, def.cells) : 0;
@@ -1188,17 +1466,40 @@
       while (width < scored.length && scored[width].d <= reach) width++;
       // Finer maps take proportionally more cells per tick to keep the pace.
       const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE) * G.scale) + 1;
+      const forts = a.to >= 0 && G.factions[a.to].built.fort > 0;
+      let held = 0;
+      let stalled = null;
       for (let j = 0; j < Math.min(cap, scored.length); j++) {
         const i = scored[j].i;
-        if (G.owner[i] !== a.to) continue;
+        let wall = null;
+        if (G.owner[i] !== a.to || lockedFor(i, a.from)) continue;
+        // Fort-covered land holds out: on most ticks the whole line there
+        // stands firm, so invaders push in far more slowly.
+        const lvl = forts ? fortLevel(i, a.to) : 0;
+        if (lvl) {
+          held = Math.max(held, lvl);
+          // The fort itself, and the line of a wall, must be besieged
+          // before they fall.
+          // Only an overwhelming force keeps the siege going.
+          const b = G.bAt[i] >= 0 ? G.buildings.get(G.bAt[i]) : null;
+          if (b && b.type === 'fort' && !(overwhelms(a, b.level) && besieged(b))) continue;
+          wall = wallThrough(i, a.to);
+          if (wall && !(overwhelms(a, wallLevel(wall)) && besieged(wall, wallLevel(wall)))) continue;
+          if (stalled === null) stalled = rng() < FORT_SLOW[lvl - 1];
+          if (stalled) continue;
+        }
         if (!capture(i, atk, a)) {
           // Not enough left to take another cell: the survivors come home.
           atk.troops += a.troops;
           a.done = true;
           return;
         }
+        // Overwhelmed: taking a stretch of wall brings it down.
+        if (wall) breachWall(wall, a.from, i);
         if (a.to >= 0 && !G.factions[a.to].alive) return;
       }
+      // Attacking a fort line costs troops every tick it holds.
+      if (held) a.troops *= 1 - FORT_ATTRITION[held - 1];
     });
     G.attacks = G.attacks.filter((a) => !a.done);
   }
@@ -1411,11 +1712,18 @@
   function advanceBoats() {
     for (const b of G.boats) {
       if (!sail(b, sc(BOAT_SPEED) * TICK)) continue;
+      // Coastal shells already on their way still hit as it reaches the beach.
+      for (const s of G.shells) {
+        if (s.done || s.boat !== b.id) continue;
+        s.done = true;
+        coastalImpact(s);
+      }
+      if (b.done) continue; // Sunk on the way in.
       b.done = true;
       const f = G.factions[b.owner];
       const o = G.owner[b.landing];
       // An ally took the beach while we sailed: the troops go home.
-      if (allied(o, b.owner)) {
+      if (allied(o, b.owner) || lockedFor(b.landing, b.owner)) {
         f.troops += b.troops;
         continue;
       }
@@ -1479,6 +1787,65 @@
     }
   }
 
+  // Coastal batteries fire one guided shell at a time at the nearest enemy
+  // troop boat in range (one not already under fire first), or failing that
+  // at a warship.
+  function fireCoastal() {
+    for (const b of G.buildings.values()) {
+      if (b.type !== 'coastal') continue;
+      if ((b.readyAt || 0) > G.time) continue;
+      const range = sc(COAST_RANGE[b.level - 1]);
+      // Boats not already under fire come first.
+      const boats = G.boats
+        .filter((x) => !x.done && !allied(x.owner, b.owner) && cellDist(x.cell, b.cell) <= range)
+        .sort((p, q) => (p.marked > G.time) - (q.marked > G.time) || cellDist(p.cell, b.cell) - cellDist(q.cell, b.cell))
+        .slice(0, 1);
+      let targets = boats.map((boat) => ({ boat }));
+      if (!targets.length) {
+        const ship = G.ships
+          .filter((x) => !x.dead && !allied(x.owner, b.owner) && cellDist(x.cell, b.cell) <= range)
+          .sort((p, q) => cellDist(p.cell, b.cell) - cellDist(q.cell, b.cell))[0];
+        if (ship) targets = [{ ship }];
+      }
+      if (!targets.length) continue;
+      b.readyAt = G.time + COAST_RELOAD[b.level - 1];
+      G.bver++;
+      addFx(b.cell, 1.2, '255,230,150', 220);
+      for (const t of targets) {
+        const v = t.boat || t.ship;
+        if (t.boat) t.boat.marked = G.time + COAST_SHELL_TIME;
+        G.shells.push({
+          owner: b.owner, from: b.cell, to: v.cell, t: 0, dur: COAST_SHELL_TIME, blast: 0,
+          boat: t.boat ? t.boat.id : 0, ship: t.ship ? t.ship.id : 0, kill: COAST_KILL[b.level - 1],
+        });
+      }
+    }
+  }
+
+  // A guided coastal shell landing: it follows its target, so it hits if
+  // the target is still afloat.
+  function coastalImpact(s) {
+    const hitBoat = s.boat && G.boats.find((x) => x.id === s.boat && !x.done);
+    if (hitBoat) {
+      addFx(hitBoat.cell, 2, '255,200,90', 400);
+      // The blast catches every enemy boat sailing close by (a convoy).
+      for (const boat of G.boats) {
+        if (boat.done || allied(boat.owner, s.owner) || cellDist(boat.cell, hitBoat.cell) > sc(COAST_SPLASH)) continue;
+        boat.full = boat.full || boat.troops;
+        boat.troops *= 1 - s.kill;
+        if (boat.troops < boat.full * COAST_SINK || boat.troops < 2) {
+          boat.done = true;
+          addFx(boat.cell, 3, '255,170,60', 600);
+          announce({ k: 'boatSunk', f: boat.owner, by: s.owner, gun: true });
+        }
+      }
+      return;
+    }
+    const ship = s.ship && G.ships.find((x) => x.id === s.ship && !x.dead);
+    if (ship) damageShip(ship, s.owner);
+    else addFx(s.to, 1.5, '200,220,255', 300);
+  }
+
   function hitBuilding(i) {
     const bid = G.bAt[i];
     if (bid < 0) return false;
@@ -1496,6 +1863,7 @@
     const x0 = cx(s.to);
     const y0 = cy(s.to);
     const r = s.blast;
+    const hit = new Set();
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r + 1) continue;
@@ -1505,13 +1873,19 @@
         const i = y * G.gw + x;
         const o = G.owner[i];
         if (o < 0 || allied(o, s.owner)) continue;
+        hit.add(o);
+        const wall = G.walls.length ? wallThrough(i, o) : null;
+        if (wall) breachWall(wall, s.owner, i);
         // A surviving building shrugs off the hit and keeps its cell.
         if (hitBuilding(i)) continue;
         const def = G.factions[o];
         def.troops = Math.max(0, def.troops - (def.troops / Math.max(1, def.cells)) * 1.5);
         setOwner(i, NEUTRAL);
+        lockCell(i, o, s.lock || SHELL_LOCK);
       }
     }
+    // Each hit also costs the nation a share of all its troops.
+    for (const fid of hit) G.factions[fid].troops *= 1 - (s.kill || SHELL_KILL);
     addFx(s.to, 1 + r, '255,200,90', 450);
   }
 
@@ -2006,7 +2380,7 @@
         const y = clamp(Math.round(cy(at) + Math.sin(ang) * r), 0, G.gh - 1);
         if (x < 0 || x >= G.gw) continue;
         const cell = y * G.gw + x;
-        shellImpact({ to: cell, owner: p.owner, blast: Math.max(1, Math.round(sc(1))) });
+        shellImpact({ to: cell, owner: p.owner, blast: Math.max(1, Math.round(sc(1))), kill: BOMB_KILL, lock: BOMB_LOCK });
         bombShipping(cell, p.owner);
       }
       return;
@@ -2084,15 +2458,29 @@
     const R = m.radius;
     const track = G.track;
     G.track = false;
+    const hit = new Map();            // faction -> [cells lost, cells before]
+    const breached = [];              // walls caught in the blast
     blastArea(m.to, R, m.tsar, (i) => {
       const o = G.owner[i];
       if (o >= 0) {
-        const def = G.factions[o];
-        def.troops = Math.max(0, def.troops - def.troops / Math.max(1, def.cells) * 1.5);
+        const h = hit.get(o) || [0, G.factions[o].cells];
+        h[0]++;
+        hit.set(o, h);
+        const wall = G.walls.length ? wallThrough(i, o) : null;
+        if (wall && !breached.some(([w]) => w === wall)) breached.push([wall, i]);
+        lockCell(i, o, m.tsar ? TSAR_LOCK : NUKE_LOCK);
       }
       setOwner(i, NEUTRAL);
     });
     G.track = track;
+    for (const [wall, i] of breached) breachWall(wall, m.owner, i);
+    // The blast kills a share of the whole nation's troops, more the more
+    // of its land is destroyed.
+    for (const [fid, [lost, before]] of hit) {
+      const f = G.factions[fid];
+      const loss = Math.min(0.85, (m.tsar ? TSAR_KILL : NUKE_KILL) + 3 * lost / Math.max(1, before));
+      f.troops *= 1 - loss;
+    }
     if (track) G.nukeEvents.push([m.to, R, m.tsar ? 1 : 0]);
     // The Tsar Bomba has its own colour code so it gets the bigger sound.
     addFx(m.to, R * 2.2, m.tsar ? '255,250,230' : '255,240,200', m.tsar ? 2200 : 1400);
@@ -2102,9 +2490,15 @@
   function advanceProjectiles() {
     for (const s of G.shells) {
       s.t += TICK;
+      // Guided coastal shells track their target.
+      if (s.boat || s.ship) {
+        const v = s.boat ? G.boats.find((x) => x.id === s.boat && !x.done) : G.ships.find((x) => x.id === s.ship && !x.dead);
+        if (v) s.to = v.cell;
+      }
       if (s.t >= s.dur) {
         s.done = true;
-        shellImpact(s);
+        if (s.boat || s.ship) coastalImpact(s);
+        else shellImpact(s);
       }
     }
     for (const m of G.missiles) {
@@ -2278,6 +2672,9 @@
     if (aggr >= 0.45 && !f.built.barracks && f.cells > 400) wants.push(['barracks', -1]);
     if (aggr >= 0.6 && !f.built.airfield && f.cells > 1200) wants.push(['airfield', -1]);
     if (scan.coast && aggr >= 0.35 && !f.built.shipyard && f.cells > 700) wants.push(['shipyard', -1]);
+    // Coastal guns once someone is landing troops on our shores.
+    const invaded = G.boats.some((b) => !allied(b.owner, f.id) && b.landing >= 0 && G.owner[b.landing] === f.id);
+    if (scan.coast && (invaded || f.cells > 1500) && f.built.coastal < 1 + Math.floor(f.cells / 3000)) wants.push(['coastal', -1]);
     for (const [type, arg] of wants) {
       if (f.gold < costOf(f, type)) {
         if (type === 'silo' && Math.random() < 0.6) return; // Saving up.
@@ -2288,7 +2685,7 @@
       let at = -1;
       if (type === 'mine') at = arg;
       else if (['city', 'silo', 'sam', 'barracks', 'airfield'].includes(type)) at = interiorCell(f, type);
-      else if (type === 'shipyard') at = coastalCell(f);
+      else if (type === 'shipyard' || type === 'coastal') at = coastalCell(f);
       else if (scan.samples.has(arg)) at = borderCell(f, type, scan.samples.get(arg));
       if (at >= 0 && build(f, type, at)) return;
     }
@@ -2340,7 +2737,7 @@
 
   // Upgrade priorities: mines, silos and cities pay off best.
   function aiUpgrade(f) {
-    const order = { mine: 0, silo: 1, sam: 2, city: 3, barracks: 4, artillery: 5, airfield: 6, fort: 7 };
+    const order = { mine: 0, silo: 1, sam: 2, city: 3, barracks: 4, artillery: 5, coastal: 5.5, airfield: 6, fort: 7 };
     const options = [...G.buildings.values()]
       .filter((b) => b.owner === f.id && b.level < MAX_LEVEL && upgradeCost(b) <= f.gold)
       .sort((a, b) => order[a.type] - order[b.type] || a.level - b.level);
@@ -2376,7 +2773,7 @@
 
   // Bomb the most valuable enemy building within reach of a ready air base.
   function aiStrike(f) {
-    const value = { silo: 5, city: 4, sam: 4, airfield: 3, artillery: 3, shipyard: 2, barracks: 2, mine: 1, fort: 1 };
+    const value = { silo: 5, city: 4, sam: 4, airfield: 3, artillery: 3, shipyard: 2, coastal: 2, barracks: 2, mine: 1, fort: 1 };
     let best = null;
     let bestScore = 0;
     for (const b of G.buildings.values()) {
@@ -2469,8 +2866,10 @@
     advanceInterceptors();
     advancePlanes();
     advanceShips();
+    if (G.walls.length) pruneWalls();
     spawnCrates();
     fireArtillery();
+    if (G.factions.some((f) => f.built.coastal)) fireCoastal();
     advanceProjectiles();
     decayRadiation();
     for (const f of G.factions) {
@@ -2597,6 +2996,7 @@
     if (o === WATER) return fail('Tap land to attack. Boats sail automatically');
     if (o === fid) return fail("That's already yours. Tap a neighbour");
     if (allied(fid, o)) return fail(`${G.factions[o].name} is your ally`);
+    if (lockedFor(i, fid)) return fail(`That land was just hit. You can retake it in ${Math.ceil(G.lockUntil[i] - G.time)}s`);
     const amount = me.troops * clamp(Number(pct) || 50, 1, 100) / 100;
     if (amount < 2) return fail('Not enough troops yet');
     if (neighbourScan(fid).counts.has(o) && landRouteIsShort(fid, i)) {
@@ -2663,6 +3063,10 @@
     if (act.a === 'ship') {
       const err = buildShip(G.factions[fid], act.id, act.kind);
       return err ? fail(err) : { ok: true, msg: `${SHIPS[act.kind].icon} ${SHIPS[act.kind].label} launched` };
+    }
+    if (act.a === 'wall') {
+      const err = buildWall(G.factions[fid], act.from, act.to);
+      return err ? fail(err) : { ok: true, msg: '🧱 Wall built: the two forts now hold the line together' };
     }
     if (act.a === 'move') {
       const err = moveShip(G.factions[fid], act.id, cell);
@@ -3023,6 +3427,54 @@
     }
   }
 
+  // Walls: a stone line with battlements between two forts, in the owner's
+  // colour.
+  function drawWalls() {
+    if (!G.walls.length) return;
+    const w = Math.max(3 * view.dpr, view.cell * 1.2);
+    for (const wall of G.walls) {
+      const path = wall.path;
+      if (!path || path.length < 2) continue;
+      // Corner positions, kept continuous across the map's wrap.
+      let x = cx(path[0]) + 0.5;
+      const pts = [{ x: sx(x), y: sy(cy(path[0]) + 0.5) }];
+      for (let k = 1; k < path.length; k++) {
+        x += ddx(path[k], path[k - 1]);
+        pts.push({ x: sx(x), y: sy(cy(path[k]) + 0.5) });
+      }
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      if (!onScreen(midX, midY, span / 2 + w)) continue;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(20,20,24,0.85)';
+      ctx.lineWidth = w + 2 * view.dpr;
+      // A smooth curve: each corner is rounded off between the midpoints of
+      // its two sides.
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length - 1; k++) {
+        ctx.quadraticCurveTo(pts[k].x, pts[k].y, (pts[k].x + pts[k + 1].x) / 2, (pts[k].y + pts[k + 1].y) / 2);
+      }
+      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.stroke();
+      ctx.strokeStyle = '#a8a29e';
+      ctx.lineWidth = w;
+      ctx.stroke();
+      // Battlements in the owner's colour.
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = G.factions[wall.owner].css;
+      ctx.lineWidth = w * 0.55;
+      ctx.setLineDash([w * 0.7, w * 0.7]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineJoin = 'miter';
+    }
+  }
+
   function drawBuildings() {
     const size = clamp(view.cell * 2.6, 14 * view.dpr, 30 * view.dpr);
     ctx.textAlign = 'center';
@@ -3144,6 +3596,22 @@
       ctx.fillRect(x - 3.6 * u, y + 2.6 * u, 7.2 * u, 1.2 * u);
     } else if (type === 'airfield') {
       planeShape(x, y, u, 0);
+    } else if (type === 'coastal') {
+      // A gun barrel angled out to sea, over a wave.
+      ctx.save();
+      ctx.translate(x - 0.6 * u, y - 0.4 * u);
+      ctx.rotate(-0.55);
+      ctx.fillRect(-0.8 * u, -1 * u, 5.2 * u, 2 * u);
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(x - 1.2 * u, y + 0.2 * u, 1.8 * u, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, 0.9 * u);
+      ctx.beginPath();
+      ctx.moveTo(x - 4 * u, y + 3.4 * u);
+      ctx.quadraticCurveTo(x - 2 * u, y + 1.8 * u, x, y + 3.4 * u);
+      ctx.quadraticCurveTo(x + 2 * u, y + 5 * u, x + 4 * u, y + 3.4 * u);
+      ctx.stroke();
     } else if (type === 'barracks') {
       // Two sergeant's chevrons.
       ctx.lineWidth = Math.max(1, 1.1 * u);
@@ -3688,6 +4156,7 @@
       ctx.translate(shiftX, 0);
       drawDeposits();
       drawCrates();
+      drawWalls();
       drawBuildings();
       drawBoats();
       drawShips();
@@ -3849,6 +4318,22 @@
       } else {
         html += '<p class="now">Fully upgraded.</p>';
       }
+      if (b.type === 'fort') {
+        const mine = wallsOf(b).length;
+        html += `<p class="now">🧱 Walls: ${mine} of ${WALLS_PER_FORT}. A wall joins two forts up to `
+          + `${Math.round(sc(WALL_MAX))} cells apart into one big fort: land along the wall, out to the weaker fort's range, is defended like a fort's. `
+          + 'The wall holds out under siege like a fort, but comes down if it is overrun or blasted.</p>';
+        if (mine < WALLS_PER_FORT) {
+          const options = wallTargets(b).filter((t) => wallsOf(t.fort).length < WALLS_PER_FORT);
+          if (!options.length) html += '<p class="now">Build another fort within reach (joined to this one by your land) to wall them together.</p>';
+          for (const { fort: o, route } of options.slice(0, 4)) {
+            html += `<button data-wall="${o.id}" data-from="${b.id}" ${me.gold < WALL_COST ? 'disabled' : ''}>`
+              + `<span class="bi">🧱</span><span class="bt"><b>Wall to level ${o.level} fort</b>`
+              + `<small>${compass(b.cell, o.cell)}, a ${route.length}-cell wall along your land</small></span>`
+              + `<span class="bc">${WALL_COST}g</span></button>`;
+          }
+        }
+      }
       if (b.type === 'shipyard') {
         html += `<p class="now">Fleet: ${me.ships || 0} of ${me.shipCap || 0} ships</p>`;
         for (const [kind, spec] of Object.entries(SHIPS)) {
@@ -3872,6 +4357,14 @@
         + `<span class="bi">${info.icon}</span><span class="bt"><b>${info.label}</b><small>${info.stats(1)}</small></span>`
         + `<span class="bc">${fmt(cost)}g</span></button>`;
     }).join('') + '<p class="now">Tip: tap one of your buildings to upgrade it.</p>';
+  }
+
+  // Rough direction from one cell to another, for labels.
+  function compass(from, to) {
+    const dx = ddx(to, from);
+    const dy = cy(to) - cy(from);
+    const names = ['east', 'south-east', 'south', 'south-west', 'west', 'north-west', 'north', 'north-east'];
+    return names[(Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8];
   }
 
   function openBuildSheet() {
@@ -4109,6 +4602,10 @@
     }
     if (b.dataset.ship) {
       perform({ a: 'ship', id: Number(b.dataset.yard), kind: b.dataset.ship }, () => renderBuildSheet());
+      return;
+    }
+    if (b.dataset.wall) {
+      perform({ a: 'wall', from: Number(b.dataset.from), to: Number(b.dataset.wall) }, () => renderBuildSheet());
       return;
     }
     G.mode = { type: 'build', building: b.dataset.type };
@@ -4755,6 +5252,7 @@
         Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
       b: full || G.bver !== net.sentBver
         ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp, b.readyAt || 0]) : null,
+      walls: full || G.bver !== net.sentBver ? G.walls.map((w) => [w.id, w.a, w.b, w.owner, w.path]) : null,
       boats: G.boats.map((b) => [b.id, b.owner, Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, Math.round(b.troops)]),
       shells: G.shells.map((s) => [s.from, s.to, s.t, s.dur]),
       missiles: G.missiles.map((m) => [m.from, m.to, m.t, m.dur, m.radius, m.tsar ? 1 : 0]),
@@ -5087,6 +5585,7 @@
         G.factions[owner].built[type]++;
       }
     }
+    if (s.walls) G.walls = s.walls.map(([id, a, b, owner, path]) => ({ id, a, b, owner, path }));
     // Keep each boat's and ship's drawn position so it can glide to the new one.
     const oldBoats = new Map(G.boats.map((b) => [b.id, b]));
     G.boats = s.boats.map(([id, owner, x, y, troops]) => {
