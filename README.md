@@ -185,6 +185,12 @@ keen they are to target you. AI nations build and upgrade mines, cities, forts a
 boats overseas. On Normal the more aggressive ones build nuclear silos. On Hard
 most of them do. On Easy, no AI builds a silo.
 
+**Match statistics:** the end-of-game screen shows your own numbers (troops
+raised, land captured, buildings built, shells fired, nukes and Tsar Bombas
+launched, air strikes, paradrops, sea invasions, warships built, ships and
+boats sunk, and missiles and planes shot down) and a table comparing every
+nation, with each AI's level.
+
 ## Multiplayer
 
 Up to six players can share one war, on any mix of browsers, the Android
@@ -193,6 +199,10 @@ are AI nations by default, and the host taps a slot to switch its AI on or
 off (switch them all off for humans only). Each new player takes the next
 slot. Your menu colour is your first choice, and you can change it in the
 lobby.
+
+**AI levels:** each AI slot shows its level. The host taps it to cycle
+**Easy → Normal → Hard**, so one game can mix a gentle neighbour with a hard
+rival. New slots start at the difficulty picked on the main menu.
 
 **Teams:** the host taps a slot's team badge to cycle **No team → Team 1 →
 Team 2 → Team 3**, for players and AI slots alike. Allies can't attack,
