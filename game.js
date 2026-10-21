@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.9.4';
+  const APP_VERSION = '1.9.5';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -2996,7 +2996,10 @@
     if (o === WATER) return fail('Tap land to attack. Boats sail automatically');
     if (o === fid) return fail("That's already yours. Tap a neighbour");
     if (allied(fid, o)) return fail(`${G.factions[o].name} is your ally`);
-    if (lockedFor(i, fid)) return fail(`That land was just hit. You can retake it in ${Math.ceil(G.lockUntil[i] - G.time)}s`);
+    if (lockedFor(i, fid)) {
+      const secs = Math.ceil(G.lockUntil[i] - G.time);
+      return fail(`Reinforcements arriving in ${secs} second${secs === 1 ? '' : 's'}`);
+    }
     const amount = me.troops * clamp(Number(pct) || 50, 1, 100) / 100;
     if (amount < 2) return fail('Not enough troops yet');
     if (neighbourScan(fid).counts.has(o) && landRouteIsShort(fid, i)) {
