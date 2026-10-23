@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.12.0';
+  const APP_VERSION = '1.12.1';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -4969,6 +4969,16 @@
       openUpgradeSheet(building);
       return;
     }
+    // With a barracks or an air base, tapping an enemy building offers your
+    // spies, a paradrop or an air strike on it.
+    const meNow = G.factions[myId];
+    if (meNow.built.barracks || meNow.built.airfield || G.ships.some((sh) => sh.owner === myId && sh.type === 'carrier')) {
+      const target = buildingAtScreen(clientX, clientY, true);
+      if (target) {
+        openSpySheet(target);
+        return;
+      }
+    }
     const deposit = depositAtScreen(clientX, clientY, i);
     if (deposit >= 0) {
       openDepositSheet(deposit);
@@ -4979,14 +4989,15 @@
 
   // One of our buildings whose icon is under this screen point. Icons are
   // drawn bigger than a cell when zoomed out, so the whole icon counts.
-  function buildingAtScreen(clientX, clientY) {
+  // `enemy`: an enemy's building instead of one of yours.
+  function buildingAtScreen(clientX, clientY, enemy) {
     const px = clientX * view.dpr;
     const py = clientY * view.dpr;
     const size = clamp(view.cell * 2.6, 14 * view.dpr, 30 * view.dpr);
     let best = null;
     let bestD = Math.max(size * 0.6, 12 * view.dpr);
     for (const b of G.buildings.values()) {
-      if (b.owner !== myId) continue;
+      if (enemy ? b.owner === myId || allied(b.owner, myId) : b.owner !== myId) continue;
       const y = sy(cy(b.cell) + 0.5);
       for (const x of copies(sx(cx(b.cell) + 0.5), canvas.width)) {
         const d = Math.hypot(x - px, y - py);
@@ -6686,6 +6697,73 @@
     $('build-sheet').classList.add('show');
   }
 
+  // Whether nation fid has land within r cells of cell.
+  function nearBorder(fid, cell, r) {
+    const x0 = cx(cell);
+    const y0 = cy(cell);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const y = y0 + dy;
+        if (y < 0 || y >= G.gh) continue;
+        const x = wx(x0 + dx);
+        if (x >= 0 && x < G.gw && G.owner[y * G.gw + x] === fid) return true;
+      }
+    }
+    return false;
+  }
+
+  // 🕵️ An enemy building you tapped: send spies at it, or capture it.
+  let spyTarget = -1;
+  function openSpySheet(b) {
+    sheetBuilding = null;
+    spyTarget = b.id;
+    sheetMode = 'spyop';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+    sfx('tap');
+  }
+
+  function renderSpySheet() {
+    const me = G.factions[myId];
+    const b = G.buildings.get(spyTarget);
+    if (!b || b.owner === myId || allied(b.owner, myId)) {
+      closeBuildSheet();
+      return;
+    }
+    const label = b.type === 'sam' ? 'SAM site' : BUILDINGS[b.type].label.toLowerCase();
+    $('sheet-title').textContent = `${BUILDINGS[b.type].icon} ${G.factions[b.owner].name}'s ${label} · level ${b.level}`;
+    const wait = Math.ceil((me.nextSpy || 0) - G.time);
+    const ops = !me.built.barracks ? [] : b.type === 'silo' ? ['sabotage', 'meltdown'] : ['sabotage'];
+    let html = me.built.barracks ? '' : '<p class="now">🕵️ Build a barracks to send spies at it.</p>';
+    for (const op of ops) {
+      const spec = SPY_OPS[op];
+      const pc = Math.round(spyChance(op, b) * 100);
+      const locked = (me.barracksLevel || 0) < spec.barracks;
+      const tone = pc >= 60 ? 'good' : pc >= 35 ? 'fair' : 'poor';
+      const title = op === 'meltdown' ? `Overload the silo${b.level >= 3 ? ' (Tsar Bomba!)' : ''}` : 'Sabotage';
+      const note = locked ? `Needs a level ${spec.barracks} barracks`
+        : op === 'meltdown' ? `It blows up with a level ${b.level} ${b.level >= 3 ? 'Tsar Bomba' : 'nuke'}: mind your own land nearby`
+          : `Out of action for ${SABOTAGE_TIME}s`;
+      html += `<button data-spyop="${op}" ${locked || wait > 0 || me.gold < spec.cost ? 'disabled' : ''}>`
+        + `<span class="bi">${spec.icon}</span><span class="bt"><b>${title} <span class="odds ${tone}">${pc}%</span></b><small>${note}</small></span>`
+        + `<span class="bc">${wait > 0 ? `${wait}s` : `${fmt(spec.cost)}g`}</span></button>`;
+    }
+    // Capturing it: paratroopers (or bombs) from an air base in reach, or an
+    // ordinary attack when it's close enough to your border to get there.
+    const air = pickAirbase(me, b.cell);
+    const why = air.err && /range|first/i.test(air.err) ? 'No airfield or carrier in range' : air.err;
+    html += `<button data-spyop="para" ${air.err ? 'disabled' : ''}><span class="bi">🪂</span><span class="bt"><b>Paradrop</b>`
+      + `<small>${why || `Drop ${settings.pct}% of your troops right onto it to capture it`}</small></span><span class="bc">Free</span></button>`;
+    html += `<button data-spyop="strike" ${air.err || me.gold < STRIKE_COST ? 'disabled' : ''}><span class="bi">💣</span><span class="bt"><b>Air strike</b>`
+      + `<small>${why || 'Bombs the building and the land around it'}</small></span><span class="bc">${STRIKE_COST}g</span></button>`;
+    if (nearBorder(myId, b.cell, Math.round(sc(6)))) {
+      html += `<button data-spyop="attack"><span class="bi">⚔️</span><span class="bt"><b>Attack here</b>`
+        + `<small>It's near your border: send ${settings.pct}% of your troops at it</small></span><span class="bc"></span></button>`;
+    }
+    if (me.built.barracks) html += `<p class="now">🕵️ Spies go in by helicopter, under SAM radar. Enemy forts and barracks make them likelier to be caught.</p>`;
+    listOut.html = html;
+  }
+
   // ⭐ Your perk and special weapon.
   function openSpecialSheet() {
     if (!G || G.state !== 'play') return;
@@ -6961,6 +7039,10 @@
     }
     if (sheetMode === 'nukes') {
       renderNukeSheet();
+      return;
+    }
+    if (sheetMode === 'spyop') {
+      renderSpySheet();
       return;
     }
     if (sheetMode === 'sub') {
@@ -7543,6 +7625,19 @@
       }
       buildSel = b.dataset.tile;
       renderBuildSheet();
+      return;
+    }
+    if (b.dataset.spyop) {
+      const t = G.buildings.get(spyTarget);
+      if (!t) {
+        closeBuildSheet();
+        return;
+      }
+      const op = b.dataset.spyop;
+      if (op === 'attack') perform({ a: 'attack', cell: t.cell, pct: settings.pct });
+      else if (op === 'para' || op === 'strike') perform({ a: op, cell: t.cell, pct: settings.pct });
+      else perform({ a: 'spy', op, cell: t.cell });
+      closeBuildSheet();
       return;
     }
     if (b.dataset.op) {

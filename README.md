@@ -153,8 +153,16 @@ artillery hit.
   without being shot down, its airfield or carrier is ready to fly again
   straight away.
 - **⚔️ Barracks:** the best one you own makes every attack (by land, boat
-  or air) cheaper. Barracks also train **🕵️ spies**: tap your barracks,
-  choose an operation, then tap an enemy building anywhere on the map. Your
+  or air) cheaper. Barracks also train **🕵️ spies**.
+
+  **Tapping an enemy building** (once you have a barracks, an airfield or a
+  carrier) opens a menu for it: **🕵️ Sabotage** and **☢ Overload the
+  silo** (with a barracks; silos only for the overload), each with your
+  odds; **🪂 Paradrop** (to capture it) and **💣 Air strike** (with an
+  airfield or carrier in reach, otherwise greyed with the reason); and
+  **⚔️ Attack here** when it's close to your border. Each one goes at
+  once. You can also tap your barracks, choose an operation, then pick the
+  target on the map. Your
   team goes in by **helicopter**, flying low under SAM radar (only forts and
   barracks can stop spies), in 4 to 15 seconds depending on distance. It
   hovers while the team fast-ropes down, and a ring round the target shows
