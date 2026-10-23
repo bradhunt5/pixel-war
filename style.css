@@ -623,3 +623,27 @@ body.tutorial #board { display: none; }
 .tut.done { border-color: rgba(74, 222, 128, 0.8); }
 .tut-row { display: flex; gap: 8px; }
 .tut-row button { flex: 1 1 0; }
+
+/* ---------- National perks ---------- */
+
+#btn-special.ready { border-color: rgba(250, 204, 21, 0.7); background: rgba(250, 204, 21, 0.18); }
+.perks-link {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 700;
+}
+.perk-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  text-align: left;
+  font-size: 13px;
+}
+.perk-row small { color: var(--muted); font-size: 12px; line-height: 1.35; }

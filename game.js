@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '1.11.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -90,13 +90,133 @@
   const STRIKE_COST = 300;
   const STRIKE_BOMBS = 6;
   const STRIKE_SPREAD = 4;        // cells around the target the bombs fall in
+  // Napalm strikes: fires that burn land for a while and spread a little.
+  const NAPALM_COST = 450;
+  const NAPALM_FIRES = 10;        // fires started by one strike
+  const NAPALM_BURN = 8;          // seconds each fire burns
+  const NAPALM_SPREAD = 0.3;      // chance a fire spreads each second
+  const NAPALM_GENS = 3;          // how many times fire can pass on
   // Barracks make every attack cheaper (the best barracks counts).
   const BARRACKS_DISCOUNT = [0.15, 0.25, 0.35];
   // Warships, built at a shipyard. Speeds in cells per second; ranges in cells.
+  // ---------- National perks ----------
+  //
+  // Every nation gets a perk and a ⭐ special weapon from its region (on the
+  // Random map, a random region's), so where you start shapes your strategy.
+  const PERKS = {
+    naval: { icon: '⚓', label: 'Naval power', text: 'Warships cost 25% less and your fleet can hold 2 more', special: 'dreadnought' },
+    engineers: { icon: '🧱', label: 'Engineers', text: 'Forts and walls cost 25% less, and walls reach 25% further', special: 'railgun' },
+    trade: { icon: '💰', label: 'Trade', text: '+15% gold income', special: 'mercs' },
+    winter: { icon: '❄️', label: 'Winter war', text: 'Invaders on your land lose 50% more troops and advance 25% slower', special: 'viking' },
+    manpower: { icon: '🪖', label: 'Manpower', text: 'Troops grow 15% faster', special: 'conscription' },
+    air: { icon: '✈️', label: 'Air power', text: 'Airfields and carriers reload 25% faster', special: 'drones' },
+    jungle: { icon: '🌿', label: 'Jungle', text: 'Invaders advance 25% slower, and your troops lose half as many when land falls', special: 'ambush' },
+    stealth: { icon: '✈️', label: 'Air power', text: 'Airfields and carriers reload 25% faster', special: 'stealth' },
+  };
+  const REGION_LISTS = {
+    europe: {
+      naval: ['United Kingdom', 'Ireland', 'Isle of Man', 'Jersey', 'Guernsey', 'Netherlands', 'Belgium', 'Luxembourg'],
+      engineers: ['France', 'Germany', 'Switzerland', 'Austria', 'Czechia', 'Slovakia', 'Hungary', 'Liechtenstein', 'Andorra', 'Slovenia', 'Poland'],
+      trade: ['Spain', 'Portugal', 'Italy', 'Greece', 'Malta', 'Cyprus', 'N. Cyprus', 'Croatia', 'Bosnia and Herz.', 'Serbia', 'Montenegro',
+        'Kosovo', 'Macedonia', 'Albania', 'Bulgaria', 'Romania'],
+      winter: ['Norway', 'Sweden', 'Finland', 'Denmark', 'Iceland', 'Greenland', 'Faeroe Is.', 'Åland'],
+      manpower: ['Russia', 'Ukraine', 'Belarus', 'Moldova', 'Lithuania', 'Latvia', 'Estonia', 'Kazakhstan', 'Georgia', 'Armenia', 'Azerbaijan'],
+      air: ['Turkey', 'Syria', 'Lebanon', 'Iraq', 'Iran', 'Morocco', 'Algeria', 'Tunisia'],
+    },
+    world: {
+      naval: ['United Kingdom', 'Ireland', 'Isle of Man', 'Australia', 'New Zealand', 'Papua New Guinea', 'Indonesia', 'Philippines', 'Japan',
+        'Taiwan', 'Fiji', 'Vanuatu', 'Solomon Is.', 'Samoa', 'New Caledonia', 'Timor-Leste', 'Brunei', 'Micronesia', 'Guam', 'Sri Lanka',
+        'Madagascar', 'Indian Ocean Ter.', 'Falkland Is.', 'S. Geo. and the Is.', 'Fr. S. Antarctic Lands'],
+      engineers: ['France', 'Germany', 'Switzerland', 'Austria', 'Czechia', 'Slovakia', 'Hungary', 'Liechtenstein', 'Slovenia', 'Poland',
+        'Netherlands', 'Belgium', 'Luxembourg', 'Spain', 'Portugal', 'Italy', 'Greece', 'Croatia', 'Bosnia and Herz.', 'Serbia', 'Montenegro',
+        'Kosovo', 'Macedonia', 'Albania', 'Bulgaria', 'Romania', 'Cyprus', 'N. Cyprus', 'Lithuania', 'Latvia', 'Estonia', 'Moldova'],
+      winter: ['Norway', 'Sweden', 'Finland', 'Denmark', 'Iceland', 'Greenland', 'Faeroe Is.', 'Åland', 'St. Pierre and Miquelon'],
+      manpower: ['Russia', 'Ukraine', 'Belarus', 'Kazakhstan', 'Mongolia', 'Kyrgyzstan', 'Tajikistan', 'Turkmenistan', 'Uzbekistan', 'Georgia',
+        'Armenia', 'Azerbaijan', 'China', 'Hong Kong', 'India', 'Pakistan', 'Bangladesh', 'Nepal', 'Bhutan', 'Myanmar', 'Thailand', 'Laos',
+        'Vietnam', 'Cambodia', 'Malaysia', 'North Korea', 'South Korea', 'Afghanistan', 'Siachen Glacier'],
+      air: ['Turkey', 'Syria', 'Lebanon', 'Iraq', 'Iran', 'Israel', 'Palestine', 'Jordan', 'Saudi Arabia', 'Yemen', 'Oman', 'United Arab Emirates',
+        'Qatar', 'Kuwait', 'Egypt', 'Libya', 'Tunisia', 'Algeria', 'Morocco', 'W. Sahara'],
+      stealth: ['United States of America', 'Canada', 'Mexico', 'Bahamas', 'Puerto Rico', 'Turks and Caicos Is.'],
+      jungle: ['Brazil', 'Argentina', 'Chile', 'Peru', 'Bolivia', 'Colombia', 'Venezuela', 'Ecuador', 'Paraguay', 'Uruguay', 'Guyana', 'Suriname',
+        'Panama', 'Costa Rica', 'Nicaragua', 'Honduras', 'El Salvador', 'Guatemala', 'Belize', 'Cuba', 'Jamaica', 'Haiti', 'Dominican Rep.',
+        'Trinidad and Tobago', 'Saint Lucia'],
+    },
+  };
+  // The ⭐ special weapon each perk brings. target: what you tap (none if
+  // it acts at once).
+  const SPECIALS = {
+    dreadnought: { icon: '⚓', label: 'Dreadnought', cooldown: 120, target: null,
+      text: 'Launch a super-battleship from your shipyard: 3× tougher than a battleship with double the range. One at a time' },
+    railgun: { icon: '🚂', label: 'Railway gun', cooldown: 30, target: 'own',
+      text: 'Place a super-artillery gun on your land, or move the one you have: it shells anything within a very long range' },
+    mercs: { icon: '💰', label: 'Mercenaries', cooldown: 150, target: null,
+      text: 'Hire troops worth 40% of your troop cap for 1,500 gold, even above the cap (for a minute)' },
+    viking: { icon: '🪓', label: 'Viking raid', cooldown: 120, target: 'coast',
+      text: 'Three fast longships carrying 40% of your troops raid an enemy coast. Coastal batteries can\'t hit them, they storm '
+        + 'inland twice as fast, and every cell they take plunders gold' },
+    conscription: { icon: '🪖', label: 'Conscription', cooldown: 180, target: null,
+      text: '+50% troops at once, even above the cap (for 45 seconds)' },
+    drones: { icon: '🛸', label: 'Drone swarm', cooldown: 90, target: 'enemy',
+      text: 'Twelve drones strike around a target within reach of your land. They\'re too small for SAMs to stop' },
+    stealth: { icon: '🦇', label: 'Stealth bomber', cooldown: 90, target: 'enemy',
+      text: 'A heavy air strike from an airfield or carrier in range. SAMs can\'t see it' },
+    ambush: { icon: '🌿', label: 'Ambush', cooldown: 120, target: 'own',
+      text: 'Mark an area of your land: for 20 seconds, enemy attacks into it lose half their troops' },
+  };
+  const MERC_COST = 1500;
+  const VIKING_SHARE = 0.4;
+  const VIKING_PLUNDER = 6;       // gold per cell a Viking raid takes
+  const DRONE_RANGE = 140;
+  const DRONES = 12;
+  const RAIL_RANGE = 70;
+  const RAIL_RELOAD = 4;
+  const RAIL_BLAST = 3;
+  const AMBUSH_RADIUS = 10;
+  const AMBUSH_TIME = 20;
+  const specialOf = (f) => (f && PERKS[f.perk] ? SPECIALS[PERKS[f.perk].special] : null);
+
+  // Country name -> perk, per map. Anything unlisted (most of Africa on the
+  // World map) trades.
+  const REGION_OF = {};
+  for (const [map, lists] of Object.entries(REGION_LISTS)) {
+    REGION_OF[map] = {};
+    for (const [perk, names] of Object.entries(lists)) for (const n of names) REGION_OF[map][n] = perk;
+  }
+  function perkForCountry(name) {
+    return (REGION_OF[G.kind] && REGION_OF[G.kind][name]) || (G.kind === 'world' ? 'trade' : 'engineers');
+  }
+  const perkOf = (f) => (f && PERKS[f.perk] ? f.perk : null);
+  const hasPerk = (f, p) => !!f && f.perk === p;
+
   const SHIPS = {
     battleship: { label: 'Battleship', icon: '⚓', cost: 400, hp: 5, speed: 6, range: 14, reload: 2.5 },
     carrier: { label: 'Aircraft carrier', icon: '🛩️', cost: 1500, hp: 10, speed: 4 },
+    // Naval power's ⭐ special: never built at a shipyard.
+    dreadnought: { label: 'Dreadnought', icon: '⚓', cost: 0, hp: 15, speed: 5, range: 28, reload: 1.5, special: true },
+    // Hidden from enemies until it fires or sails close to their warships or
+    // coastal batteries (the only things that can hit it).
+    submarine: { label: 'Submarine', icon: '🐋', cost: 900, hp: 4, speed: 5, sub: true, yard: 2 },
   };
+  // Submarine-launched missiles. Range in cells; reload per submarine.
+  const SUB_RANGE = 90;
+  const SUB_REVEAL = 10;          // seconds a sub shows up after firing
+  const SUB_WEAPONS = {
+    cruise: { icon: '🚀', label: 'Cruise missile', cost: 400, reload: 8, text: 'Flies low under most SAM cover and destroys the building it hits' },
+    ccruise: { icon: '🎆', label: 'Cluster cruise missile', cost: 650, reload: 12, text: 'Breaks up over the target into 8 bombs across a wide area' },
+    nuke: { icon: '☢', label: 'Sub nuke', cost: 1350, reload: 35, silo: 2, text: 'A level 2 nuke from the sea. Needs a level 2 silo at home' },
+    cnuke: { icon: '☢', label: 'Cluster nuke', cost: 1800, reload: 45, silo: 2, text: 'Splits into 5 nuclear warheads spread round the target; SAMs must stop each one' },
+    emp: { icon: '⚡', label: 'EMP missile', cost: 500, reload: 20, text: 'Knocks out enemy SAMs, guns, airfields, silos and ships for 20s' },
+  };
+  const CRUISE_SPEED = 32;        // cells per second
+  const CRUISE_BLAST = 2;
+  const CLUSTER_SPLIT = 0.8;      // fraction of the flight where a cluster breaks up
+  const CLUSTER_BOMBS = 8;
+  const CLUSTER_SPREAD = 7;
+  const CLUSTER_WARHEADS = 5;
+  const CLUSTER_NUKE_COST = 1500; // from a level 2+ silo
+  const EMP_COST = 500;           // from any silo
+  const EMP_RADIUS = 16;
+  const EMP_TIME = 20;
   const SHIPS_PER_YARD_LEVEL = 2;
   const MAX_SHIPS = 8;
   // Supply drops appear on unclaimed land.
@@ -202,6 +322,11 @@
     shipyard: {
       label: 'Shipyard', icon: '🚢', cost: 450, step: 1.4, hp: 4,
       stats: (l) => `Builds warships (on the coast). Up to ${l * SHIPS_PER_YARD_LEVEL} ships from this yard`,
+    },
+    // Engineers' ⭐ special, placed from the ⭐ menu (never built).
+    railgun: {
+      label: 'Railway gun', icon: '🚂', cost: 0, step: 1, hp: 8, special: true,
+      stats: () => `Shells enemy land and ships up to ${RAIL_RANGE} cells away, every ${RAIL_RELOAD}s. Move it from the ⭐ menu`,
     },
     coastal: {
       label: 'Coastal battery', icon: '🌊', cost: 400, step: 1.35, hp: 3,
@@ -485,6 +610,7 @@
     }
     for (const f of alive) if (!f.isPlayer && G.time >= (f.nextDip || 0)) aiDiplomacy(f);
     G.proposals = G.proposals.filter((p) => p.until > G.time);
+    if (G.ambushes.length) G.ambushes = G.ambushes.filter((x) => x.until > G.time);
   }
 
   function aiDiplomacy(f) {
@@ -513,6 +639,107 @@
     } else if (allyVerdict(best.id, f.id).yes) {
       formAlliance(f.id, best.id);
     }
+  }
+
+  // ⭐ Each nation's special weapon.
+  function actSpecial(fid, cell) {
+    const f = G.factions[fid];
+    const key = PERKS[f.perk] ? PERKS[f.perk].special : null;
+    const spec = SPECIALS[key];
+    if (!spec) return fail('');
+    const wait = (f.nextSpecial || 0) - G.time;
+    if (wait > 0) return fail(`${spec.label} ready in ${Math.ceil(wait)}s`);
+    let msg = '';
+    if (key === 'dreadnought') {
+      if (G.ships.some((sh) => sh.owner === fid && sh.type === 'dreadnought')) return fail('Your dreadnought is already at sea');
+      const yard = [...G.buildings.values()].find((b) => b.type === 'shipyard' && b.owner === fid);
+      if (!yard) return fail('Build a shipyard first');
+      const err = buildShip(f, yard.id, 'dreadnought', true);
+      if (err) return fail(err);
+      msg = '⚓ The dreadnought sets sail!';
+    } else if (key === 'railgun') {
+      if (cell < 0 || G.owner[cell] !== fid) return fail('Tap your own land');
+      const gun = [...G.buildings.values()].find((b) => b.type === 'railgun' && b.owner === fid);
+      if (gun) {
+        const err = canPlace(f, 'railgun', cell);
+        if (err) return fail(err);
+        G.bAt[gun.cell] = -1;
+        gun.cell = cell;
+        G.bAt[cell] = gun.id;
+        G.bver++;
+        msg = '🚂 The railway gun moves up';
+      } else {
+        if (!build(f, 'railgun', cell)) return fail(canPlace(f, 'railgun', cell) || 'Can\'t place it there');
+        const b = G.buildings.get(G.bAt[cell]);
+        b.level = MAX_LEVEL;
+        msg = '🚂 Railway gun in position';
+      }
+    } else if (key === 'mercs' || key === 'conscription') {
+      if (key === 'mercs' && f.gold < MERC_COST) return fail(`Mercenaries cost ${fmt(MERC_COST)} gold`);
+      if (key === 'mercs') f.gold -= MERC_COST;
+      const add = key === 'mercs' ? maxTroops(f) * 0.4 : f.troops * 0.5;
+      f.surge = add;
+      f.surgeUntil = G.time + (key === 'mercs' ? 60 : 45);
+      f.troops += add;
+      msg = `${spec.icon} +${fmt(add)} troops`;
+    } else if (key === 'viking') {
+      const o = cell >= 0 ? G.owner[cell] : -1;
+      if (o < 0 || allied(fid, o)) return fail('Tap an enemy nation\'s coast');
+      let coast = false;
+      for (let i = 0; i < G.n && !coast; i++) if (G.owner[i] === fid && waterNear(i, 1) >= 0) coast = true;
+      if (!coast) return fail('Your land needs a coastline first');
+      const share = f.troops * VIKING_SHARE / 3;
+      let sent = 0;
+      let err = null;
+      for (let k = 0; k < 3; k++) {
+        err = launchBoat(fid, cell, share, true);
+        if (!err) sent++;
+      }
+      if (!sent) return fail(err || 'No sea route there');
+      msg = `🪓 ${sent} longships set sail for ${G.factions[o].name}!`;
+    } else if (key === 'drones') {
+      const o = cell >= 0 ? G.owner[cell] : -1;
+      if (o < 0 || allied(fid, o)) return fail('Tap enemy land');
+      if (cellDist(cell, f.capital) > sc(DRONE_RANGE)) return fail('Too far from your capital for drones');
+      const spread = sc(8);
+      for (let k = 0; k < DRONES; k++) {
+        const t = xyCell(cx(cell) + (Math.random() * 2 - 1) * spread, cy(cell) + (Math.random() * 2 - 1) * spread);
+        if (t < 0) continue;
+        G.shells.push({ owner: fid, from: f.capital, to: t, t: 0, dur: 1.4 + k * 0.1, blast: 1, kill: 0.015 });
+      }
+      hostile(fid, o, 15);
+      msg = '🛸 Drones away!';
+    } else if (key === 'stealth') {
+      const o = cell >= 0 ? G.owner[cell] : -1;
+      if (o < 0 || allied(fid, o)) return fail('Tap enemy land');
+      let base = null;
+      for (const b of G.buildings.values()) {
+        if (b.type === 'airfield' && b.owner === fid && cellDist(b.cell, cell) <= sc(AIR_RANGE[b.level - 1])) base = base || b;
+      }
+      const carrier = !base && G.ships.find((sh) => sh.type === 'carrier' && sh.owner === fid && cellDist(sh.cell, cell) <= sc(AIR_RANGE[1]));
+      if (!base && !carrier) return fail('Needs an airfield or carrier within range');
+      const from = base ? base.cell : carrier.cell;
+      G.planes.push({ owner: fid, from, to: cell, t: 0, dur: PLANE_TIME, troops: 0, kind: 'strike', stealth: true, bombs: 12,
+        base: base ? { id: base.id } : { ship: carrier.id } });
+      hostile(fid, o, 20);
+      msg = '🦇 The stealth bomber is on its way';
+    } else if (key === 'ambush') {
+      if (cell < 0 || G.owner[cell] !== fid) return fail('Tap your own land');
+      G.ambushes.push({ owner: fid, cell, r: Math.round(sc(AMBUSH_RADIUS)), until: G.time + AMBUSH_TIME });
+      msg = '🌿 The ambush is set';
+    }
+    f.nextSpecial = G.time + spec.cooldown;
+    stat(fid, 'specials');
+    announce({ k: 'special', f: fid, key, to: cell >= 0 && G.owner[cell] >= 0 && G.owner[cell] !== fid ? G.owner[cell] : -1 });
+    return { ok: true, msg };
+  }
+
+  // The cell at map position (x, y), or -1 off the map.
+  function xyCell(x, y) {
+    const xi = wx(Math.round(x));
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= G.gw || yi >= G.gh) return -1;
+    return yi * G.gw + xi;
   }
 
   function actPropose(fid, to) {
@@ -839,6 +1066,8 @@
       planes: [],
       ships: [],
       walls: [],
+      ambushes: [],
+      fires: [],
       ally: new Uint8Array(SLOT * SLOT),
       truce: new Float32Array(SLOT * SLOT),
       rel: new Float32Array(SLOT * SLOT),
@@ -889,6 +1118,7 @@
     ['ships', 'Warships built'],
     ['sunk', 'Ships and boats sunk'],
     ['downed', 'Missiles and planes shot down'],
+    ['specials', 'Special weapon uses'],
     ['allies', 'Alliances made'],
     ['broken', 'Alliances ended'],
     ['aidGold', 'Gold sent as aid'],
@@ -1078,10 +1308,13 @@
 
   function claimStart(f, i) {
     f.capital = i;
+    // Random maps have no countries: a random region's perk.
+    if (!G.real) f.perk = f.perk || shuffle(Object.keys(PERKS).filter((k) => k !== 'stealth'), G.rng)[0];
     if (G.real) {
       // Take the chosen country (or the part of it nearest the capital).
       const c = G.country[i];
       f.name = G.mp && f.player ? `${G.countryNames[c]} (${f.player})` : G.countryNames[c];
+      f.perk = perkForCountry(G.countryNames[c]);
       const queue = [i];
       const seen = new Set(queue);
       for (let q = 0; q < queue.length && f.cells < sc2(COUNTRY_START_CELLS); q++) {
@@ -1178,8 +1411,12 @@
 
   function costOf(f, type) {
     const b = BUILDINGS[type];
-    return Math.round(b.cost * b.step ** f.built[type]);
+    const perk = type === 'fort' && hasPerk(f, 'engineers') ? 0.75 : 1;
+    return Math.round(b.cost * b.step ** f.built[type] * perk);
   }
+  const shipCost = (f, kind) => Math.round(SHIPS[kind].cost * (hasPerk(f, 'naval') ? 0.75 : 1));
+  const wallCost = (f) => Math.round(WALL_COST * (hasPerk(f, 'engineers') ? 0.75 : 1));
+  const wallReach = (f) => sc(WALL_MAX) * (hasPerk(f, 'engineers') ? 1.25 : 1);
 
   function canPlace(f, type, i) {
     if (i < 0 || G.owner[i] !== f.id) return 'Build on your own land';
@@ -1272,7 +1509,7 @@
         if (readyAt <= G.time) f.silosReady++;
         f.nextNuke = Math.min(f.nextNuke, readyAt);
       } else if (b.type === 'shipyard') {
-        f.shipCap = Math.min(MAX_SHIPS, f.shipCap + b.level * SHIPS_PER_YARD_LEVEL);
+        f.shipCap = Math.min(MAX_SHIPS + (hasPerk(f, 'naval') ? 2 : 0), f.shipCap + b.level * SHIPS_PER_YARD_LEVEL + (hasPerk(f, 'naval') && !f.shipCap ? 2 : 0));
       } else if (b.type === 'barracks') {
         f.attackDiscount = Math.max(f.attackDiscount, BARRACKS_DISCOUNT[l]);
       } else if (b.type === 'airfield') {
@@ -1322,7 +1559,7 @@
   // crosses enemy or unclaimed land and follows the shoreline. Returns every
   // cell on it, or null if the forts aren't joined by our land within reach.
   function wallRoute(fid, from, to) {
-    const limit = sc(WALL_MAX) * 2;
+    const limit = wallReach(G.factions[fid]) * 2;
     const edge = (c) => {
       const x = cx(c);
       const y = cy(c);
@@ -1483,7 +1720,7 @@
   function wallTargets(b) {
     return [...G.buildings.values()]
       .filter((o) => o.type === 'fort' && o.owner === b.owner && o.id !== b.id
-        && cellDist(o.cell, b.cell) <= sc(WALL_MAX)
+        && cellDist(o.cell, b.cell) <= wallReach(G.factions[b.owner])
         && !G.walls.some((w) => (w.a === b.id && w.b === o.id) || (w.a === o.id && w.b === b.id)))
       .sort((p, q) => cellDist(p.cell, b.cell) - cellDist(q.cell, b.cell))
       .map((o) => ({ fort: o, route: wallRoute(b.owner, b.cell, o.cell) }))
@@ -1496,15 +1733,15 @@
     if (!a || !b || a.type !== 'fort' || b.type !== 'fort' || a.owner !== f.id || b.owner !== f.id || a === b) {
       return 'Walls join two of your forts';
     }
-    if (cellDist(a.cell, b.cell) > sc(WALL_MAX)) return `Forts must be within ${Math.round(sc(WALL_MAX))} cells to wall`;
+    if (cellDist(a.cell, b.cell) > wallReach(f)) return `Forts must be within ${Math.round(wallReach(f))} cells to wall`;
     if (G.walls.some((w) => (w.a === a.id && w.b === b.id) || (w.a === b.id && w.b === a.id))) return 'Those forts are already walled';
     if (wallsOf(a).length >= WALLS_PER_FORT || wallsOf(b).length >= WALLS_PER_FORT) {
       return `A fort can have at most ${WALLS_PER_FORT} walls`;
     }
-    if (f.gold < WALL_COST) return `A wall costs ${WALL_COST} gold`;
+    if (f.gold < wallCost(f)) return `A wall costs ${wallCost(f)} gold`;
     const cells = wallRoute(f.id, a.cell, b.cell);
     if (!cells) return 'Your own land must join the two forts';
-    f.gold -= WALL_COST;
+    f.gold -= wallCost(f);
     G.walls.push({
       id: G.nextWallId++, a: a.id, b: b.id, owner: f.id, cells, cellSet: new Set(cells), path: routeCorners(cells),
     });
@@ -1539,10 +1776,11 @@
 
   // ---------- Simulation ----------
 
-  const maxTroops = (f) => 100 + f.cells * 12 + (f.capBonus || 0);
+  // A surge (mercenaries, conscription) lifts the cap for a while.
+  const maxTroops = (f) => 100 + f.cells * 12 + (f.capBonus || 0) + (f.surgeUntil > G.time ? f.surge : 0);
 
   function grow(f) {
-    f.gold += (1 + f.cells * 0.003 / sc2(1) + f.goldBonus) * TICK * f.income;
+    f.gold += (1 + f.cells * 0.003 / sc2(1) + f.goldBonus) * TICK * f.income * (hasPerk(f, 'trade') ? 1.15 : 1);
     const max = maxTroops(f);
     if (f.troops > max) {
       f.troops -= (f.troops - max) * 0.02;
@@ -1554,7 +1792,8 @@
     const income = f.landGrab ? Math.max(1, f.income) : f.income;
     const base = 0.5 + f.cells * 0.04 + f.troopBonus;
     const before = f.troops;
-    f.troops = Math.min(max, f.troops + (base + interest) * TICK * income);
+    const perk = hasPerk(f, 'manpower') ? 1.15 : 1;
+    f.troops = Math.min(max, f.troops + (base + interest) * TICK * income * perk);
     f.stats.troops += Math.max(0, f.troops - before);
   }
 
@@ -1647,6 +1886,18 @@
         sfx('crate');
         toast(`🎁 ${name(ev.f)} sent you ${fmt(ev.amount)} ${ev.kind}`);
       }
+    } else if (ev.k === 'special') {
+      const spec = SPECIALS[ev.key];
+      if (!spec) return;
+      if (ev.to === myId) {
+        sfx('error');
+        toast(ev.key === 'viking' ? `🪓 Vikings from ${name(ev.f)} are raiding your coast!` : `${spec.icon} ${name(ev.f)} used ${spec.label} on you!`);
+      } else if (ev.f !== myId && ev.key === 'dreadnought') {
+        toast(`⚓ ${name(ev.f)} has launched a dreadnought`);
+      }
+    } else if (ev.k === 'ambush') {
+      if (ev.f === myId) toast(`🌿 Ambush! ${name(ev.to)}'s attack lost half its troops`);
+      else if (ev.to === myId) toast(`🌿 Your attack ran into ${name(ev.f)}'s ambush and lost half its troops!`);
     } else if (ev.k === 'warning') {
       if (ev.f === myId) {
         sfx('error');
@@ -1665,14 +1916,21 @@
       sfx('siren');
       // Keep the music down from the klaxon until the missile lands.
       if (window.PixelMusic) window.PixelMusic.duck(NUKE_TIME, 0.15);
-      toast(ev.f === myId ? '☢ Nuke launched!' : `☢ ${name(ev.f)} has launched a nuke!`);
+      const what = ev.cluster ? 'cluster nuke' : 'nuke';
+      toast(ev.f === myId ? `☢ ${ev.cluster ? 'Cluster nuke' : 'Nuke'} launched!` : `☢ ${name(ev.f)} has launched a ${what}!`);
+    } else if (ev.k === 'missile') {
+      const w = SUB_WEAPONS[ev.kind];
+      if (!w) return;
+      sfx('attack');
+      if (ev.f === myId) toast(`${w.icon} ${w.label} away!`);
+      else if (ev.to === myId) toast(`${w.icon} ${name(ev.f)} fired a ${w.label.toLowerCase()} at you!`);
     } else if (ev.k === 'tsar') {
       sfx('siren');
       setTimeout(() => sfx('siren'), 1400);
       if (window.PixelMusic) window.PixelMusic.duck(TSAR_TIME, 0.1);
       toast(ev.f === myId ? '☢☢ Tsar Bomba launched!' : `☢☢ ${name(ev.f)} has launched a TSAR BOMBA!`);
     } else if (ev.k === 'intercept') {
-      const what = ev.tsar ? 'Tsar Bomba' : 'nuke';
+      const what = ev.what || (ev.tsar ? 'Tsar Bomba' : 'nuke');
       if (ev.by === myId) toast(`📡 Your SAM shot down ${name(ev.f)}'s ${what}!`);
       else if (ev.f === myId) toast(`📡 Your ${what} was shot down by ${name(ev.by)}`);
       else toast(`📡 ${name(ev.by)} shot down ${name(ev.f)}'s ${what}`);
@@ -1691,7 +1949,7 @@
       else if (ev.by === myId) toast(`⚓ You sank ${name(ev.f)}'s ${what}!`);
     } else if (ev.k === 'boatSunk') {
       if (ev.f === myId) toast(`⚓ ${name(ev.by)} sank one of your troop boats!`);
-      else if (ev.by === myId) toast(`⚓ Your ${ev.air ? 'bomber' : ev.gun ? 'coastal battery' : 'battleship'} sank ${name(ev.f)}'s troop boat`);
+      else if (ev.by === myId) toast(`⚓ Your ${ev.air ? 'bomber' : ev.gun ? 'coastal battery' : ev.blast ? 'strike' : 'battleship'} sank ${name(ev.f)}'s troop boat`);
     } else if (ev.k === 'crate') {
       if (ev.f !== myId) return;
       sfx('crate');
@@ -1707,7 +1965,8 @@
     const fort = def && def.built.fort ? fortMult(i, def.id) : 1;
     let c = def ? 1.5 + density * 1.15 : NEUTRAL_COST;
     if (G.rad[i] > 0) c *= RAD_MULT;
-    return { cost: c * fort, shielded: fort > 1 };
+    if (hasPerk(def, 'winter')) c *= 1.5;
+    return { cost: c * fort, shielded: fort > 1 || hasPerk(def, 'jungle') };
   }
 
   // Take one cell for `atk`, paying from `pool` (an attack or a boat).
@@ -1725,6 +1984,7 @@
     if (def) def.troops = Math.max(0, def.troops - density * (shielded ? FORT_SHIELD : 1));
     setOwner(i, atk.id);
     atk.stats.land++;
+    if (pool.plunder) atk.gold += VIKING_PLUNDER;
     if (def && def.cells === 0) eliminate(def, atk.id);
     return true;
   }
@@ -1817,7 +2077,7 @@
       let width = 0;
       while (width < scored.length && scored[width].d <= reach) width++;
       // Finer maps take proportionally more cells per tick to keep the pace.
-      const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE) * G.scale) + 1;
+      const cap = Math.ceil(width * (a.to >= 0 ? ENEMY_RATE : NEUTRAL_RATE) * G.scale * (a.plunder ? 2 : 1)) + 1;
       const forts = a.to >= 0 && G.factions[a.to].built.fort > 0;
       let held = 0;
       let stalled = null;
@@ -1825,6 +2085,8 @@
         const i = scored[j].i;
         let wall = null;
         if (G.owner[i] !== a.to || lockedFor(i, a.from)) continue;
+        // Winter and jungle slow invaders down.
+        if (a.to >= 0 && (G.factions[a.to].perk === 'winter' || G.factions[a.to].perk === 'jungle') && rng() < 0.25) continue;
         // Fort-covered land holds out: on most ticks the whole line there
         // stands firm, so invaders push in far more slowly.
         const lvl = forts ? fortLevel(i, a.to) : 0;
@@ -1848,6 +2110,13 @@
         }
         // Overwhelmed: taking a stretch of wall brings it down.
         if (wall) breachWall(wall, a.from, i);
+        // Walking into an ambush costs half the attack.
+        if (!a.ambushed && a.to >= 0 && G.ambushes.some((x) => x.owner === a.to && x.until > G.time && cellDist(x.cell, i) <= x.r)) {
+          a.ambushed = true;
+          a.troops *= 0.5;
+          addFx(i, 3, '134,239,172', 600);
+          announce({ k: 'ambush', f: a.to, to: a.from });
+        }
         if (a.to >= 0 && !G.factions[a.to].alive) return;
       }
       // Attacking a fort line costs troops every tick it holds.
@@ -2044,9 +2313,9 @@
     return done;
   }
 
-  function launchBoat(fid, target, troops) {
+  function launchBoat(fid, target, troops, viking) {
     const f = G.factions[fid];
-    if (G.boats.filter((b) => b.owner === fid).length >= MAX_BOATS) return 'Too many boats at sea';
+    if (!viking && G.boats.filter((b) => b.owner === fid && !b.viking).length >= MAX_BOATS) return 'Too many boats at sea';
     const landing = findLanding(target);
     if (landing < 0) return 'No coast to land on';
     const path = seaRoute(fid, landing);
@@ -2058,14 +2327,14 @@
     hostile(fid, G.owner[target], 12);
     G.boats.push({
       id: G.nextBoatId = (G.nextBoatId || 0) + 1, owner: fid, troops, landing, aimX: cx(target), aimY: cy(target),
-      voyage: makeVoyage(path), x: cx(path[0]) + 0.5, y: cy(path[0]) + 0.5, angle: 0, cell: path[0],
+      voyage: makeVoyage(path), x: cx(path[0]) + 0.5, y: cy(path[0]) + 0.5, angle: 0, cell: path[0], viking: !!viking,
     });
     return null;
   }
 
   function advanceBoats() {
     for (const b of G.boats) {
-      if (!sail(b, sc(BOAT_SPEED) * TICK)) continue;
+      if (!sail(b, sc(BOAT_SPEED) * TICK * (b.viking ? 2 : 1))) continue;
       // Coastal shells already on their way still hit as it reaches the beach.
       for (const s of G.shells) {
         if (s.done || s.boat !== b.id) continue;
@@ -2082,8 +2351,14 @@
         continue;
       }
       if (o === WATER || !capture(b.landing, f, b)) continue;
-      if (b.troops >= 1 && (o < 0 || G.factions[o].alive)) addAttack(b.owner, o, b.troops, b.aimX, b.aimY);
-      else f.troops += Math.max(0, b.troops);
+      if (b.troops >= 1 && (o < 0 || G.factions[o].alive)) {
+        addAttack(b.owner, o, b.troops, b.aimX, b.aimY);
+        // Vikings storm inland, plundering as they go.
+        const raid = b.viking && G.attacks.find((a) => a.from === b.owner && a.to === o && !a.done);
+        if (raid) raid.plunder = true;
+      } else {
+        f.troops += Math.max(0, b.troops);
+      }
     }
     G.boats = G.boats.filter((b) => !b.done);
   }
@@ -2118,27 +2393,31 @@
 
   function fireArtillery() {
     for (const b of G.buildings.values()) {
-      if (b.type !== 'artillery') continue;
-      b.reload -= TICK;
+      if (b.type !== 'artillery' && b.type !== 'railgun') continue;
+      const rail = b.type === 'railgun';
+      const range = rail ? sc(RAIL_RANGE) : sc(ART_RANGE[b.level - 1]);
+      const reload = rail ? RAIL_RELOAD : ART_RELOAD[b.level - 1];
+      b.reload = (b.reload ?? reload) - TICK;
       if (b.reload > 0) continue;
       // Enemy warships in range come first.
-      const ship = G.ships.find((sh) => !sh.dead && !allied(sh.owner, b.owner)
-        && cellDist(sh.cell, b.cell) <= sc(ART_RANGE[b.level - 1]));
+      const ship = G.ships.find((sh) => !sh.dead && !SHIPS[sh.type].sub && !allied(sh.owner, b.owner)
+        && cellDist(sh.cell, b.cell) <= range);
       if (ship) {
-        b.reload = ART_RELOAD[b.level - 1];
+        b.reload = reload;
         addFx(b.cell, 1.2, '255,230,150', 220);
         damageShip(ship, b.owner);
         stat(b.owner, 'shots');
         continue;
       }
-      const t = artilleryTarget(b);
+      const t = artilleryTarget(b, range);
       if (t < 0) {
         b.reload = 1;
         continue;
       }
-      b.reload = ART_RELOAD[b.level - 1];
+      b.reload = reload;
       addFx(b.cell, 1.2, '255,230,150', 220); // muzzle flash (and the bang)
-      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: SHELL_TIME, blast: Math.round(sc(ART_BLAST[b.level - 1])) });
+      G.shells.push({ owner: b.owner, from: b.cell, to: t, t: 0, dur: rail ? SHELL_TIME * 1.6 : SHELL_TIME,
+        blast: Math.round(sc(rail ? RAIL_BLAST : ART_BLAST[b.level - 1])) });
       stat(b.owner, 'shots');
     }
   }
@@ -2153,7 +2432,7 @@
       const range = sc(COAST_RANGE[b.level - 1]);
       // Boats not already under fire come first.
       const boats = G.boats
-        .filter((x) => !x.done && !allied(x.owner, b.owner) && cellDist(x.cell, b.cell) <= range)
+        .filter((x) => !x.done && !x.viking && !allied(x.owner, b.owner) && cellDist(x.cell, b.cell) <= range)
         .sort((p, q) => (p.marked > G.time) - (q.marked > G.time) || cellDist(p.cell, b.cell) - cellDist(q.cell, b.cell))
         .slice(0, 1);
       let targets = boats.map((boat) => ({ boat }));
@@ -2242,6 +2521,8 @@
         lockCell(i, o, s.lock || SHELL_LOCK);
       }
     }
+    // Ships and boats caught in the blast.
+    if (s.owner >= 0 && s.ships !== false) hitShipping(s.to, Math.max(1, r), s.owner, false, 'blast');
     // Each hit also costs the nation a share of all its troops (and a
     // little of its goodwill).
     for (const fid of hit) {
@@ -2251,16 +2532,20 @@
     addFx(s.to, 1 + r, '255,200,90', 450);
   }
 
-  function launchNuke(f, target) {
+  // kind: 'nuke', 'cnuke' (cluster nuke, level 2+ silo) or 'emp'.
+  function launchNuke(f, target, kind = 'nuke') {
     if (!f.built.silo) return 'Build a nuclear silo first';
-    if (f.gold < NUKE_COST) return `Nukes cost ${NUKE_COST} gold`;
+    if (kind === 'cnuke' && f.siloLevel < 2) return 'Cluster nukes need a level 2 silo';
+    const cost = kind === 'cnuke' ? CLUSTER_NUKE_COST : kind === 'emp' ? EMP_COST : NUKE_COST;
+    const what = kind === 'cnuke' ? 'Cluster nukes' : kind === 'emp' ? 'EMP strikes' : 'Nukes';
+    if (f.gold < cost) return `${what} cost ${fmt(cost)} gold`;
     if (target < 0) return 'Tap a target on the map';
     // Each silo reloads on its own, so more silos means more frequent
     // launches. Fire from the best ready one: highest level, then nearest.
     let silo = null;
     let soonest = Infinity;
     for (const b of G.buildings.values()) {
-      if (b.type !== 'silo' || b.owner !== f.id) continue;
+      if (b.type !== 'silo' || b.owner !== f.id || (kind === 'cnuke' && b.level < 2)) continue;
       if ((b.readyAt || 0) > G.time) {
         soonest = Math.min(soonest, b.readyAt);
         continue;
@@ -2269,13 +2554,11 @@
         || (b.level === silo.level && cellDist(b.cell, target) < cellDist(silo.cell, target))) silo = b;
     }
     if (!silo) return `${f.built.silo > 1 ? 'All silos' : 'Silo'} reloading: ${Math.ceil(soonest - G.time)}s`;
-    f.gold -= NUKE_COST;
-    silo.readyAt = G.time + NUKE_COOLDOWN[silo.level - 1];
+    f.gold -= cost;
+    silo.readyAt = G.time + NUKE_COOLDOWN[silo.level - 1] * (kind === 'cnuke' ? 1.5 : 1);
     G.bver++;
-    G.missiles.push({ owner: f.id, from: silo.cell, to: target, t: 0, dur: NUKE_TIME, radius: Math.round(sc(NUKE_RADIUS[silo.level - 1])) });
-    hostile(f.id, blastVictim(target, blastRadius(f.id, 'nuke'), f.id).owner, 40);
-    splashAllies(f.id, target, 'nuke');
-    announce({ k: 'nuke', f: f.id });
+    // A cluster nuke's warheads are each a level 1 blast.
+    launchMissile(f, silo.cell, target, kind, Math.round(sc(NUKE_RADIUS[kind === 'cnuke' ? 0 : silo.level - 1])));
     return null;
   }
 
@@ -2319,12 +2602,22 @@
   // shoot-down is visible. A target is not fired on by more SAMs than it
   // needs hits.
   function samAirDefence() {
-    for (const p of G.planes) if (!p.done) samEngage(p, 'plane', (k) => planePoint(p, k));
+    for (const p of G.planes) if (!p.done && !p.stealth) samEngage(p, 'plane', (k) => planePoint(p, k));
   }
 
   function samDefence() {
     if (!G.missiles.length || !G.factions.some((f) => f.built.sam)) return;
-    for (const m of G.missiles) if (!m.done) samEngage(m, 'missile', (k) => flightPoint(m, k, 0.45));
+    for (const m of G.missiles) if (!m.done && !m.bomb) samEngage(m, 'missile', (k) => missilePoint(m, k));
+  }
+
+  // A missile's drawn position (in cells) at fraction k of its flight.
+  // Nukes arc high, cruise missiles skim low, and the parts of a cluster
+  // fall straight from where it broke up.
+  function missilePoint(m, k) {
+    if (m.px === undefined) return flightPoint(m, k, m.cruise ? 0.05 : 0.45);
+    let dx = cx(m.to) + 0.5 - m.px;
+    if (G.wrap) dx -= Math.round(dx / G.gw) * G.gw;
+    return { x: m.px + dx * k, y: m.py + (cy(m.to) + 0.5 - m.py) * k };
   }
 
   // `pos(k)` gives the target's drawn position at fraction k of its flight.
@@ -2335,7 +2628,8 @@
     for (const b of G.buildings.values()) {
       if ((target.hp || 1) - (target.inbound || 0) <= 0) return;
       if (b.type !== 'sam' || allied(b.owner, target.owner) || (b.readyAt || 0) > G.time) continue;
-      if (cellDist(b.cell, at) > sc(SAM_RANGE[b.level - 1])) continue;
+      // Low-flying cruise missiles are only seen close in.
+      if (cellDist(b.cell, at) > sc(SAM_RANGE[b.level - 1]) * (target.cruise ? 0.5 : 1)) continue;
       b.readyAt = G.time + SAM_RELOAD[b.level - 1];
       G.bver++;
       target.inbound = (target.inbound || 0) + 1;
@@ -2437,7 +2731,8 @@
       m.hp = (m.hp || 1) - 1;
       if (m.hp <= 0) {
         m.done = true;
-        announce({ k: 'intercept', f: m.owner, by: i.owner, tsar: !!m.tsar });
+        announce({ k: 'intercept', f: m.owner, by: i.owner, tsar: !!m.tsar,
+          what: m.emp ? 'EMP missile' : m.cruise ? 'cruise missile' : m.part ? 'nuclear warhead' : m.cluster ? 'cluster nuke' : '' });
       }
     }
     G.interceptors = G.interceptors.filter((i) => !i.done);
@@ -2480,8 +2775,10 @@
 
   // Launching uses the base's reload (shared by paradrops and air strikes).
   function useAirbase(field) {
-    if (field.carrier) field.carrier.readyAt = G.time + AIR_RELOAD[1];
-    else field.readyAt = G.time + AIR_RELOAD[field.level - 1];
+    const owner = G.factions[field.carrier ? field.carrier.owner : field.owner];
+    const fast = owner && (owner.perk === 'air' || owner.perk === 'stealth') ? 0.75 : 1;
+    if (field.carrier) field.carrier.readyAt = G.time + AIR_RELOAD[1] * fast;
+    else field.readyAt = G.time + AIR_RELOAD[field.level - 1] * fast;
     G.bver++;
     addFx(field.cell, 1.5, '200,200,255', 300);
   }
@@ -2516,32 +2813,74 @@
     const reach = sc(STRIKE_SPREAD) + 2;
     let best = null;
     for (const v of [...G.ships, ...G.boats]) {
-      if (v.dead || v.done || allied(v.owner, f.id)) continue;
+      if (v.dead || v.done || allied(v.owner, f.id) || (v.type && SHIPS[v.type].sub)) continue;
       const d = cellDist(v.cell, cell);
       if (d <= reach && (!best || d < best.d)) best = { v, d };
     }
     return best ? best.v : null;
   }
 
-  function launchStrike(f, target) {
-    if (target < 0) return 'Aim at land or an enemy ship';
+  function launchStrike(f, target, napalm) {
+    if (target < 0) return 'Tap a target on the map';
     const atSea = G.owner[target] === WATER;
+    if (napalm && atSea) return 'Napalm needs a land target';
+    const cost = napalm ? NAPALM_COST : STRIKE_COST;
     const vessel = atSea ? shipTarget(f, target) : null;
-    if (atSea && !vessel) return 'Aim at land or an enemy ship';
+    // Open sea is fine too: the bombs still hit any shipping there.
     if (!atSea && allied(G.owner[target], f.id)) return "That's friendly land";
-    if (f.gold < STRIKE_COST) return `Air strikes cost ${STRIKE_COST} gold`;
+    if (f.gold < cost) return `${napalm ? 'Napalm strikes' : 'Air strikes'} cost ${cost} gold`;
     const { base, err } = pickAirbase(f, target);
     if (err) return err;
-    f.gold -= STRIKE_COST;
+    f.gold -= cost;
     useAirbase(base);
     stat(f.id, 'strikes');
     hostile(f.id, vessel ? vessel.owner : blastVictim(target, blastRadius(f.id, 'strike'), f.id).owner, 20);
+    if (atSea && !vessel) hostile(f.id, seaVictim(target, blastRadius(f.id, 'strike'), f.id), 20);
     if (!vessel) splashAllies(f.id, target, 'strike');
     G.planes.push({
       owner: f.id, from: base.cell, to: vessel ? vessel.cell : target, t: 0, dur: PLANE_TIME, troops: 0, kind: 'strike',
       base: baseRef(base), vessel: vessel ? { ship: G.ships.includes(vessel) ? vessel.id : -1, boat: G.boats.includes(vessel) ? vessel.id : -1 } : null,
+      napalm: !!napalm,
     });
     return null;
+  }
+
+  // Set a cell alight (land only, and not one already burning).
+  function ignite(i, owner, gen) {
+    if (i < 0 || G.owner[i] === WATER || G.fires.some((x) => x.cell === i)) return;
+    G.fires.push({ cell: i, owner, gen, until: G.time + NAPALM_BURN, next: G.time + 0.5 });
+  }
+
+  // Each second a fire burns enemy land under it (buildings take a hit,
+  // troops are lost) and may spread to a neighbouring cell.
+  function burnFires() {
+    if (!G.fires || !G.fires.length) return;
+    const n = G.fires.length;
+    for (let k = 0; k < n; k++) {
+      const fire = G.fires[k];
+      if (G.time >= fire.until) {
+        fire.done = true;
+        continue;
+      }
+      if (G.time < fire.next) continue;
+      fire.next += 1;
+      const i = fire.cell;
+      const o = G.owner[i];
+      if (o >= 0 && !allied(o, fire.owner) && !(G.walls.length && wallThrough(i, o)) && !hitBuilding(i)) {
+        const def = G.factions[o];
+        def.troops = Math.max(0, def.troops * 0.995 - (def.troops / Math.max(1, def.cells)) * 1.5);
+        setOwner(i, NEUTRAL);
+        lockCell(i, o, BOMB_LOCK);
+      }
+      if (fire.gen < NAPALM_GENS && Math.random() < NAPALM_SPREAD) {
+        const next = [];
+        forNeighbours(i, (j) => {
+          if (G.owner[j] !== WATER) next.push(j);
+        });
+        if (next.length) ignite(next[Math.floor(Math.random() * next.length)], fire.owner, fire.gen + 1);
+      }
+    }
+    G.fires = G.fires.filter((x) => !x.done);
   }
 
   // ---------- Navy ----------
@@ -2591,12 +2930,13 @@
     return null;
   }
 
-  function buildShip(f, yardId, kind) {
+  function buildShip(f, yardId, kind, free) {
     const yard = G.buildings.get(yardId);
     const spec = SHIPS[kind];
-    if (!yard || yard.type !== 'shipyard' || yard.owner !== f.id || !spec) return 'Tap one of your shipyards';
-    if (f.ships >= f.shipCap) return `Fleet full (${f.shipCap} ships). Upgrade or add shipyards`;
-    if (f.gold < spec.cost) return `A ${spec.label.toLowerCase()} costs ${fmt(spec.cost)} gold`;
+    if (!yard || yard.type !== 'shipyard' || yard.owner !== f.id || !spec || (spec.special && !free)) return 'Tap one of your shipyards';
+    if (!free && f.ships >= f.shipCap) return `Fleet full (${f.shipCap} ships). Upgrade or add shipyards`;
+    if (spec.yard && yard.level < spec.yard) return `Upgrade this shipyard to level ${spec.yard} to build a ${spec.label.toLowerCase()}`;
+    if (!free && f.gold < shipCost(f, kind)) return `A ${spec.label.toLowerCase()} costs ${fmt(shipCost(f, kind))} gold`;
     // Launch onto open water by the yard, not on top of another ship.
     let at = -1;
     for (let r = 2; r <= 5 && at < 0; r++) {
@@ -2610,8 +2950,10 @@
     }
     if (at < 0) at = waterNear(yard.cell, 2);
     if (at < 0) return 'No open water by this shipyard';
-    f.gold -= spec.cost;
-    f.ships++;
+    if (!free) {
+      f.gold -= shipCost(f, kind);
+      f.ships++;
+    }
     f.stats.ships++;
     G.ships.push({
       id: G.nextShipId++, owner: f.id, type: kind, cell: at, hp: spec.hp,
@@ -2641,13 +2983,143 @@
     announce({ k: 'sunk', f: sh.owner, by, type: sh.type });
   }
 
+  // Whether a viewer can see a submarine: its own side always; anyone once
+  // it has fired lately; otherwise only from their warships' and coastal
+  // batteries' range.
+  function subVisible(sh, viewer) {
+    if (!SHIPS[sh.type].sub || allied(sh.owner, viewer) || (sh.revealUntil || 0) > G.time) return true;
+    for (const o of G.ships) {
+      if (o.owner === viewer && !o.dead && SHIPS[o.type].range && cellDist(o.cell, sh.cell) <= sc(SHIPS[o.type].range)) return true;
+    }
+    for (const b of G.buildings.values()) {
+      if (b.type === 'coastal' && b.owner === viewer && cellDist(b.cell, sh.cell) <= sc(COAST_RANGE[b.level - 1])) return true;
+    }
+    return false;
+  }
+
+  // A missile from a submarine. Each sub reloads on its own.
+  function fireSub(f, id, weapon, target) {
+    const sh = G.ships.find((x) => x.id === id && x.owner === f.id && !x.dead);
+    const w = SUB_WEAPONS[weapon];
+    if (!sh || !SHIPS[sh.type].sub || !w) return 'That submarine is gone';
+    if (w.silo && f.siloLevel < w.silo) return `Sub nukes need a level ${w.silo} silo at home`;
+    if (target < 0) return 'Tap a target on the map';
+    if (G.owner[target] === f.id) return "That's your own land! Pick an enemy target";
+    if (cellDist(sh.cell, target) > sc(SUB_RANGE)) return `Out of range: subs reach ${SUB_RANGE} cells`;
+    if ((sh.empUntil || 0) > G.time) return 'Your submarine is knocked out by an EMP';
+    if ((sh.readyAt || 0) > G.time) return `Submarine reloading: ${Math.ceil(sh.readyAt - G.time)}s`;
+    if (f.gold < w.cost) return `${w.label} costs ${fmt(w.cost)} gold`;
+    f.gold -= w.cost;
+    sh.readyAt = G.time + w.reload;
+    sh.revealUntil = G.time + SUB_REVEAL;
+    stat(f.id, 'shots');
+    addFx(sh.cell, 2, '200,230,255', 400);
+    launchMissile(f, sh.cell, target, weapon);
+    return null;
+  }
+
+  // Put a missile in the air. kind: nuke, cnuke, cruise, ccruise or emp.
+  // Silo nukes come through launchNuke, which picks the radius.
+  function launchMissile(f, from, target, kind, radius) {
+    // A cluster nuke's warheads are each a level 1 blast.
+    const nukeR = radius || Math.round(sc(NUKE_RADIUS[kind === 'cnuke' ? 0 : 1]));
+    const cruise = kind === 'cruise' || kind === 'ccruise';
+    const dist = cellDist(from, target);
+    const m = { owner: f.id, from, to: target, t: 0, dur: NUKE_TIME, radius: nukeR };
+    if (cruise) {
+      m.cruise = true;
+      m.dur = clamp(dist / sc(CRUISE_SPEED), 1.2, 4);
+      m.radius = Math.round(sc(CRUISE_BLAST));
+    }
+    if (kind === 'ccruise') {
+      m.cluster = true;
+      m.radius = Math.round(sc(CLUSTER_SPREAD + 1));
+    }
+    if (kind === 'cnuke') {
+      m.cluster = true;
+      m.child = nukeR;                 // each warhead's blast radius, before it splits
+      m.hp = 2;                        // a hardened bus: two SAM hits to stop before it splits
+      m.radius = Math.round(nukeR * 1.6);
+    }
+    if (kind === 'emp') {
+      m.emp = true;
+      m.radius = Math.round(sc(EMP_RADIUS));
+    }
+    G.missiles.push(m);
+    let victim = blastVictim(target, m.radius, f.id).owner;
+    if (victim < 0) victim = seaVictim(target, m.radius, f.id);
+    hostile(f.id, victim, kind === 'emp' || cruise ? 20 : 40);
+    if (kind === 'nuke' || kind === 'cnuke') {
+      splashAllies(f.id, target, 'nuke');
+      announce({ k: 'nuke', f: f.id, cluster: kind === 'cnuke' });
+    } else {
+      announce({ k: 'missile', f: f.id, to: victim, kind });
+    }
+  }
+
+  // A cluster missile breaking up: nuclear warheads or small bombs, each
+  // falling from the break-up point to its own spot round the target.
+  function splitCluster(m) {
+    const p = missilePoint(m, m.t / m.dur);
+    const nuke = !m.cruise;
+    const n = nuke ? CLUSTER_WARHEADS : CLUSTER_BOMBS;
+    const spread = nuke ? m.child * 1.3 : sc(CLUSTER_SPREAD);
+    const x0 = cx(m.to);
+    const y0 = cy(m.to);
+    for (let k = 0; k < n; k++) {
+      // One warhead at the centre, the rest round it.
+      const ang = (k / n) * Math.PI * 2 + Math.random() * 0.6;
+      const r = nuke ? (k === 0 ? 0 : spread) : spread * (0.3 + 0.7 * Math.sqrt(Math.random()));
+      const x = wx(Math.round(x0 + Math.cos(ang) * r));
+      const y = clamp(Math.round(y0 + Math.sin(ang) * r), 0, G.gh - 1);
+      G.missiles.push({
+        owner: m.owner, from: m.from, to: y * G.gw + x, t: 0, dur: nuke ? 1 : 0.7,
+        px: p.x, py: p.y, part: true, radius: nuke ? m.child : Math.round(sc(1.5)), bomb: !nuke,
+      });
+    }
+    addFx(pointCell(p), 3, '255,230,160', 500, p);
+  }
+
+  // An EMP: enemy defences, guns, air bases, silos and ships in range stop
+  // working for a while (their reloads are pushed back).
+  function empBlast(m) {
+    const R = m.radius;
+    const until = G.time + EMP_TIME;
+    for (const b of G.buildings.values()) {
+      if (allied(b.owner, m.owner) || cellDist(b.cell, m.to) > R) continue;
+      if (!['sam', 'silo', 'airfield', 'coastal', 'artillery', 'railgun'].includes(b.type)) continue;
+      b.empUntil = until;
+      if (['sam', 'silo', 'airfield', 'coastal'].includes(b.type)) b.readyAt = Math.max(b.readyAt || 0, until);
+      if (b.type === 'artillery' || b.type === 'railgun') b.reload = Math.max(b.reload || 0, EMP_TIME);
+    }
+    for (const sh of G.ships) {
+      if (allied(sh.owner, m.owner) || cellDist(sh.cell, m.to) > R) continue;
+      sh.empUntil = until;
+      sh.readyAt = Math.max(sh.readyAt || 0, until);
+    }
+    G.bver++;
+    addFx(m.to, R, '140,200,255', 1200);
+    addFx(m.to, R * 0.5, '230,245,255', 600);
+  }
+
+  // A cruise missile: wrecks the building it hits, with a small blast.
+  function cruiseImpact(m) {
+    const bid = G.bAt[m.to];
+    if (bid >= 0) {
+      const b = G.buildings.get(bid);
+      if (b && !allied(b.owner, m.owner)) destroyBuilding(b);
+    }
+    shellImpact({ owner: m.owner, to: m.to, blast: m.radius, kill: 0.03 });
+  }
+
   // Sail along routes, then battleships fire at the nearest target in range:
   // enemy ships first, then troop boats, then buildings, then land.
   function advanceShips() {
     for (const sh of G.ships) {
       const spec = SHIPS[sh.type];
+      if ((sh.empUntil || 0) > G.time) continue;
       if (sh.voyage && sail(sh, sc(spec.speed) * TICK)) sh.voyage = null;
-      if (sh.type !== 'battleship') continue;
+      if (!spec.range) continue;
       sh.reload -= TICK;
       if (sh.reload > 0) continue;
       const range = sc(spec.range);
@@ -2719,22 +3191,62 @@
 
   // A bomb landing among ships: warships take a hit, troop boats sink.
   function bombShipping(cell, owner) {
-    const r = sc(1.5);
+    hitShipping(cell, sc(1.5), owner, false, 'air');
+  }
+
+  // A blast at sea (or on the coast): enemy troop boats within r sink and
+  // warships take a hit. A nuke sinks every enemy vessel in range, even a
+  // submarine; anything smaller passes over a submerged sub.
+  function hitShipping(cell, r, owner, nuke, how) {
     for (const sh of G.ships) {
-      if (!sh.dead && !allied(sh.owner, owner) && cellDist(sh.cell, cell) <= r) damageShip(sh, owner);
+      if (sh.dead || allied(sh.owner, owner) || cellDist(sh.cell, cell) > r) continue;
+      if (nuke) {
+        sh.hp = 1;
+        damageShip(sh, owner);
+      } else if (!SHIPS[sh.type].sub) {
+        damageShip(sh, owner);
+      }
     }
     for (const b of G.boats) {
       if (b.done || allied(b.owner, owner) || cellDist(b.cell, cell) > r) continue;
       b.done = true;
       addFx(b.cell, 3, '255,170,60', 600);
-      announce({ k: 'boatSunk', f: b.owner, by: owner, air: true });
+      announce({ k: 'boatSunk', f: b.owner, by: owner, air: how === 'air', blast: how === 'blast' });
     }
+  }
+
+  // Whose shipping a blast at sea would hit: the owner of the nearest enemy
+  // ship or boat in range, or -1.
+  function seaVictim(cell, r, shooter) {
+    let best = -1;
+    let bestD = Infinity;
+    for (const v of [...G.ships, ...G.boats]) {
+      if (v.dead || v.done || allied(v.owner, shooter)) continue;
+      const d = cellDist(v.cell, cell);
+      if (d <= r && d < bestD) {
+        bestD = d;
+        best = v.owner;
+      }
+    }
+    return best;
   }
 
   function dropPayload(p) {
     const f = G.factions[p.owner];
     const o = G.owner[p.to];
     if (!f.alive) return;
+    if (p.kind === 'strike' && p.napalm) {
+      const spread = sc(STRIKE_SPREAD);
+      for (let k = 0; k < NAPALM_FIRES; k++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = spread * Math.sqrt(Math.random());
+        const x = wx(Math.round(cx(p.to) + Math.cos(ang) * r));
+        const y = clamp(Math.round(cy(p.to) + Math.sin(ang) * r), 0, G.gh - 1);
+        ignite(y * G.gw + x, p.owner, 0);
+      }
+      addFx(p.to, spread, '255,140,40', 700);
+      return;
+    }
     if (p.kind === 'strike') {
       // Carpet bombing: bombs scattered around the target. Against shipping
       // the bomber follows its target and drops in a tighter pattern.
@@ -2746,14 +3258,14 @@
         if (v) at = v.cell;
         spread /= 2;
       }
-      for (let k = 0; k < STRIKE_BOMBS; k++) {
+      for (let k = 0; k < (p.bombs || STRIKE_BOMBS); k++) {
         const ang = Math.random() * Math.PI * 2;
         const r = spread * Math.sqrt(Math.random());
         const x = wx(Math.round(cx(at) + Math.cos(ang) * r));
         const y = clamp(Math.round(cy(at) + Math.sin(ang) * r), 0, G.gh - 1);
         if (x < 0 || x >= G.gw) continue;
         const cell = y * G.gw + x;
-        shellImpact({ to: cell, owner: p.owner, blast: Math.max(1, Math.round(sc(1))), kill: BOMB_KILL, lock: BOMB_LOCK });
+        shellImpact({ to: cell, owner: p.owner, blast: Math.max(1, Math.round(sc(1))), kill: BOMB_KILL, lock: BOMB_LOCK, ships: false });
         bombShipping(cell, p.owner);
       }
       return;
@@ -2847,12 +3359,14 @@
     });
     G.track = track;
     for (const [wall, i] of breached) breachWall(wall, m.owner, i);
+    hitShipping(m.to, R, m.owner, true, 'blast');
 
     // The blast kills a share of the whole nation's troops, more the more
     // of its land is destroyed.
     for (const [fid, [lost, before]] of hit) {
       const f = G.factions[fid];
-      const loss = Math.min(0.85, (m.tsar ? TSAR_KILL : NUKE_KILL) + 3 * lost / Math.max(1, before));
+      // Each warhead of a cluster nuke kills fewer, as there are five.
+      const loss = Math.min(0.85, (m.tsar ? TSAR_KILL : NUKE_KILL * (m.part ? 0.35 : 1)) + 3 * lost / Math.max(1, before));
       f.troops *= 1 - loss;
     }
     if (track) G.nukeEvents.push([m.to, R, m.tsar ? 1 : 0]);
@@ -2878,9 +3392,15 @@
     for (const m of G.missiles) {
       if (m.done) continue;
       m.t += TICK;
-      if (m.t >= m.dur) {
+      if (m.cluster && m.t >= m.dur * CLUSTER_SPLIT) {
         m.done = true;
-        nukeImpact(m);
+        splitCluster(m);
+      } else if (m.t >= m.dur) {
+        m.done = true;
+        if (m.bomb) shellImpact({ owner: m.owner, to: m.to, blast: m.radius, kill: 0.02 });
+        else if (m.emp) empBlast(m);
+        else if (m.cruise) cruiseImpact(m);
+        else nukeImpact(m);
       }
     }
     G.shells = G.shells.filter((s) => !s.done);
@@ -3050,8 +3570,11 @@
       if (t >= 0 && !launchTsar(f, t)) return;
     }
     if (f.built.silo && f.gold >= NUKE_COST && G.time >= f.nextNuke && Math.random() < 0.25 + aggr * 0.5) {
-      const t = nukeTarget(f);
-      if (t >= 0 && !launchNuke(f, t)) return;
+      // Sometimes an EMP or (from a level 2 silo) a cluster nuke instead.
+      const r = Math.random();
+      const kind = f.siloLevel >= 2 && f.gold >= CLUSTER_NUKE_COST && r < 0.3 ? 'cnuke' : r > 0.85 ? 'emp' : 'nuke';
+      const t = nukeTarget(f, kind === 'cnuke' ? Math.round(sc(NUKE_RADIUS[0]) * 2.2) : undefined);
+      if (t >= 0 && !launchNuke(f, t, kind)) return;
     }
     let strongest = null;
     for (const o of scan.counts.keys()) {
@@ -3108,6 +3631,8 @@
     const yard = yards[Math.floor(Math.random() * yards.length)];
     const hasCarrier = G.ships.some((sh) => sh.owner === f.id && sh.type === 'carrier');
     if (!hasCarrier && f.aggr >= 0.6 && f.gold > 2500 && Math.random() < 0.2) return !buildShip(f, yard.id, 'carrier');
+    const subs = G.ships.filter((sh) => sh.owner === f.id && sh.type === 'submarine').length;
+    if (yard.level >= 2 && subs < 2 && f.gold > 1500 && Math.random() < 0.3) return !buildShip(f, yard.id, 'submarine');
     if (f.gold > 700 && Math.random() < 0.4) return !buildShip(f, yard.id, 'battleship');
     return false;
   }
@@ -3171,7 +3696,7 @@
 
   // Bomb the most valuable enemy building within reach of a ready air base.
   function aiStrike(f) {
-    const value = { silo: 5, city: 4, sam: 4, airfield: 3, artillery: 3, shipyard: 2, coastal: 2, barracks: 2, mine: 1, fort: 1 };
+    const value = { silo: 5, city: 4, sam: 4, railgun: 4, airfield: 3, artillery: 3, shipyard: 2, coastal: 2, barracks: 2, mine: 1, fort: 1 };
     let best = null;
     let bestScore = 0;
     for (const b of G.buildings.values()) {
@@ -3182,7 +3707,44 @@
         best = b;
       }
     }
-    return !!best && !launchStrike(f, best.cell);
+    // Now and then a napalm strike instead, when it can afford one.
+    const napalm = f.gold > NAPALM_COST + 300 && Math.random() < 0.3;
+    return !!best && !launchStrike(f, best.cell, napalm);
+  }
+
+  // Fire ready submarines at the most valuable enemy building in range.
+  function aiSubs(f) {
+    const value = { silo: 5, sam: 5, city: 4, railgun: 4, airfield: 3, artillery: 3, shipyard: 2, coastal: 3, barracks: 2, mine: 1, fort: 1 };
+    for (const sh of G.ships) {
+      if (sh.owner !== f.id || !SHIPS[sh.type].sub || (sh.readyAt || 0) > G.time || (sh.empUntil || 0) > G.time) continue;
+      let best = null;
+      let bestScore = 0;
+      for (const b of G.buildings.values()) {
+        if (allied(b.owner, f.id) || cellDist(b.cell, sh.cell) > sc(SUB_RANGE)) continue;
+        const score = (value[b.type] || 1) * b.level * (G.factions[b.owner].isPlayer ? (f.diff || G.diff).playerBias : 1);
+        if (score > bestScore) {
+          bestScore = score;
+          best = b;
+        }
+      }
+      if (!best) continue;
+      // Rich and aggressive: a nuke (cluster if it can); defences in the
+      // way: an EMP; otherwise cruise missiles.
+      let w = Math.random() < 0.4 ? 'ccruise' : 'cruise';
+      const r = Math.random();
+      if (f.siloLevel >= 2 && f.gold > 3000 && r < 0.15 + f.aggr * 0.2) w = Math.random() < 0.5 ? 'cnuke' : 'nuke';
+      else if (best.type === 'sam' && r < 0.3) w = 'emp';
+      if (w === 'nuke' || w === 'cnuke') {
+        const t = nukeTarget(f);
+        if (t >= 0 && cellDist(t, sh.cell) <= sc(SUB_RANGE)) {
+          fireSub(f, sh.id, w, t);
+          continue;
+        }
+        w = 'cruise';
+      }
+      if (f.gold < SUB_WEAPONS[w].cost + 200) continue;
+      fireSub(f, sh.id, w, best.cell);
+    }
   }
 
   function aiBoat(f) {
@@ -3197,14 +3759,50 @@
     return false;
   }
 
+  // An AI's ⭐ special, used when the moment suits it.
+  function aiSpecial(f, scan) {
+    const key = PERKS[f.perk] ? PERKS[f.perk].special : null;
+    const enemies = [...scan.counts.keys()].filter((o) => o >= 0 && !allied(o, f.id)).map((o) => G.factions[o]);
+    const atWar = enemies.length > 0;
+    const strongest = enemies.sort((a, b) => b.troops - a.troops)[0];
+    const underAttack = G.attacks.filter((a) => a.to === f.id && !a.done).sort((a, b) => b.troops - a.troops)[0];
+    let cell = -1;
+    if (key === 'mercs' || key === 'conscription') {
+      if (!atWar || f.troops > maxTroops(f) * 0.8) return;
+    } else if (key === 'dreadnought') {
+      if (!f.built.shipyard) return;
+    } else if (key === 'railgun') {
+      if (!strongest || [...G.buildings.values()].some((b) => b.type === 'railgun' && b.owner === f.id)) return;
+      cell = borderCell(f, 'railgun', scan.samples.get(strongest.id));
+    } else if (key === 'ambush') {
+      if (!underAttack) return;
+      cell = xyCell(underAttack.aimX, underAttack.aimY);
+      if (cell < 0 || G.owner[cell] !== f.id) return;
+    } else {
+      // Drones, stealth bombers and Vikings go for a rival's best building.
+      let best = null;
+      for (const b of G.buildings.values()) {
+        if (allied(b.owner, f.id) || b.owner < 0) continue;
+        if (key === 'drones' && cellDist(b.cell, f.capital) > sc(DRONE_RANGE)) continue;
+        if (!best || b.level > best.level) best = b;
+      }
+      if (!best) return;
+      cell = best.cell;
+    }
+    if (cell < 0 && ['railgun', 'ambush', 'drones', 'stealth', 'viking'].includes(key)) return;
+    actSpecial(f.id, cell);
+  }
+
   function aiThink(f) {
     const aggr = f.aggr;
     f.nextThink = G.time + (2.8 - aggr * 1.8) * (0.6 + Math.random() * 0.8);
     const scan = neighbourScan(f.id);
     aiFleet(f);
+    if (G.time > 60 && Math.random() < 0.5) aiSubs(f);
     // Still in the land grab: bordering empty land and no enemy yet.
     f.landGrab = scan.counts.has(NEUTRAL) && ![...scan.counts.keys()].some((o) => o >= 0 && !allied(o, f.id));
     aiBuild(f, scan);
+    if (G.time >= (f.nextSpecial || 0) && Math.random() < 0.3) aiSpecial(f, scan);
     if (G.attacks.filter((a) => a.from === f.id).length >= 2) return;
     const ratio = f.troops / maxTroops(f);
 
@@ -3273,6 +3871,7 @@
     if (G.factions.some((f) => f.built.coastal)) fireCoastal();
     advanceProjectiles();
     decayRadiation();
+    burnFires();
     for (const f of G.factions) {
       if (f.alive && f.cells === 0) eliminate(f, -1);
     }
@@ -3407,8 +4006,10 @@
     }
     claimStart(f, i);
     if (G.factions.every((o) => !o.isPlayer || o.capital >= 0)) setState('play');
-    const msg = G.real ? `You lead ${G.countryNames[G.country[i]]}. Expand, build, conquer!`
-      : 'Grab the grey land first, then strike!';
+    const pk = PERKS[G.factions[fid].perk];
+    const perkLine = pk ? ` ${pk.icon} ${pk.label} · ⭐ ${SPECIALS[pk.special].label}` : '';
+    const msg = G.real ? `You lead ${G.countryNames[G.country[i]]}.${perkLine}`
+      : `Grab the grey land first, then strike!${perkLine}`;
     return { ok: true, msg, cell: i };
   }
 
@@ -3449,15 +4050,15 @@
     return { ok: true, msg: `${BUILDINGS[b.type].icon} ${BUILDINGS[b.type].label} upgraded to level ${b.level}` };
   }
 
-  function actNuke(fid, i) {
-    if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
+  function actNuke(fid, i, kind) {
+    if (i < 0) return fail('Tap a target on the map');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
-    const err = launchNuke(G.factions[fid], i);
+    const err = launchNuke(G.factions[fid], i, ['cnuke', 'emp'].includes(kind) ? kind : 'nuke');
     return err ? fail(err) : { ok: true, msg: '' };
   }
 
   function actTsar(fid, i) {
-    if (i < 0 || G.owner[i] === WATER) return fail('Aim at land');
+    if (i < 0) return fail('Tap a target on the map');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
     const err = launchTsar(G.factions[fid], i);
     return err ? fail(err) : { ok: true, msg: '' };
@@ -3475,7 +4076,7 @@
     if (act.a === 'spawn') return actSpawn(fid, cell);
     // Hostile acts against an ally are a betrayal: the first try only warns,
     // a second (act.betray) ends the alliance with no ceasefire.
-    if (['attack', 'nuke', 'tsar', 'strike', 'para'].includes(act.a) && cell >= 0) {
+    if (['attack', 'nuke', 'tsar', 'strike', 'para', 'special', 'subfire'].includes(act.a) && cell >= 0) {
       // Troops go where you tap. A blast counts as an attack on an ally only
       // if over 75% of the land it covers is theirs (less is a splash that
       // earns a warning, see splashWarning), and on anyone else from half.
@@ -3494,6 +4095,7 @@
         }
       }
     }
+    if (act.a === 'special') return actSpecial(fid, cell);
     if (act.a === 'propose') return actPropose(fid, Number(act.to));
     if (act.a === 'respond') return actRespond(fid, Number(act.to), !!act.yes);
     if (act.a === 'break') return actBreak(fid, Number(act.to));
@@ -3502,12 +4104,16 @@
     if (act.a === 'attack') return actAttack(fid, cell, act.pct);
     if (act.a === 'build') return actBuild(fid, act.building, cell);
     if (act.a === 'upgrade') return actUpgrade(fid, act.id);
-    if (act.a === 'nuke') return actNuke(fid, cell);
+    if (act.a === 'nuke') return actNuke(fid, cell, act.kind);
+    if (act.a === 'subfire') {
+      const err = fireSub(G.factions[fid], act.id, act.w, cell);
+      return err ? fail(err) : { ok: true, msg: '' };
+    }
     if (act.a === 'tsar') return actTsar(fid, cell);
     if (act.a === 'para') return actPara(fid, cell, act.pct);
     if (act.a === 'strike') {
-      const err = launchStrike(G.factions[fid], cell);
-      return err ? fail(err) : { ok: true, msg: '💣 Air strike inbound!' };
+      const err = launchStrike(G.factions[fid], cell, !!act.napalm);
+      return err ? fail(err) : { ok: true, msg: act.napalm ? '🔥 Napalm strike inbound!' : '💣 Air strike inbound!' };
     }
     if (act.a === 'ship') {
       const err = buildShip(G.factions[fid], act.id, act.kind);
@@ -3578,16 +4184,36 @@
       });
       return;
     }
+    if (G.mode && G.mode.type === 'sub') {
+      perform({ a: 'subfire', id: G.mode.id, w: G.mode.w, cell: i }, (res) => {
+        if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
+        if (res.ok) {
+          G.mode = null;
+          updateBanner();
+        }
+      });
+      return;
+    }
     if (G.mode && (G.mode.type === 'nuke' || G.mode.type === 'tsar')) {
-      perform({ a: G.mode.type, cell: i }, (res) => {
+      perform({ a: G.mode.type, cell: i, kind: G.mode.kind }, (res) => {
         if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
         G.mode = null;
         updateBanner();
       });
       return;
     }
+    if (G.mode && G.mode.type === 'special') {
+      perform({ a: 'special', cell: i }, (res) => {
+        if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
+        if (res.ok) {
+          G.mode = null;
+          updateBanner();
+        }
+      });
+      return;
+    }
     if (G.mode && (G.mode.type === 'para' || G.mode.type === 'strike')) {
-      perform({ a: G.mode.type, cell: i, pct: settings.pct }, (res) => {
+      perform({ a: G.mode.type, cell: i, pct: settings.pct, napalm: !!G.mode.napalm }, (res) => {
         if (!res.ok) return;
         G.mode = null;
         updateBanner();
@@ -3595,6 +4221,13 @@
       return;
     }
     const ship = shipAtScreen(clientX, clientY);
+    if (ship && SHIPS[ship.type].sub) {
+      G.mode = null;
+      updateBanner();
+      openSubSheet(ship);
+      sfx('tap');
+      return;
+    }
     if (ship) {
       G.mode = { type: 'ship', id: ship.id };
       updateBanner();
@@ -3938,6 +4571,79 @@
 
   // Walls: a stone line with battlements between two forts, in the owner's
   // colour.
+  // Ambush zones: a pulsing ring of leaves, shown to their owner and allies.
+  // Burning land: a glow, flickering flame tongues and rising smoke, a
+  // little bigger than the cell so fires read at any zoom.
+  function drawFires(now) {
+    if (!G.fires || !G.fires.length) return;
+    const c = Math.max(view.cell, 3 * view.dpr);
+    for (const fire of G.fires) {
+      const x = sx(cx(fire.cell) + 0.5);
+      const y = sy(cy(fire.cell) + 0.5);
+      if (!onScreen(x, y, c * 4)) continue;
+      const seed = fire.cell * 1.7;
+      const flick = 0.5 + 0.5 * Math.sin(now / 80 + seed);
+      const left = clamp((fire.until - G.time) / 1.5, 0, 1);
+      // Glow.
+      const g = ctx.createRadialGradient(x, y, 0, x, y, c * 1.8);
+      g.addColorStop(0, `rgba(255,170,40,${0.75 * left})`);
+      g.addColorStop(1, 'rgba(255,80,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, c * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      // Smoke drifting up.
+      const rise = ((now / 1400 + (seed % 1)) % 1);
+      ctx.fillStyle = `rgba(60,60,60,${0.35 * (1 - rise) * left})`;
+      ctx.beginPath();
+      ctx.arc(x + Math.sin(now / 500 + seed) * c * 0.4, y - c * (0.8 + rise * 2.2), c * (0.5 + rise * 0.7), 0, Math.PI * 2);
+      ctx.fill();
+      // Flame tongues: outer orange, inner yellow.
+      for (const [h, w, col] of [[1.6, 0.75, '255,110,20'], [1.0, 0.4, '255,230,120']]) {
+        const hh = c * h * (0.75 + 0.35 * flick) * (0.4 + 0.6 * left);
+        ctx.fillStyle = `rgba(${col},${0.95 * left})`;
+        ctx.beginPath();
+        ctx.moveTo(x - c * w, y + c * 0.45);
+        ctx.quadraticCurveTo(x - c * w, y - hh * 0.4, x + Math.sin(now / 120 + seed) * c * 0.2, y - hh);
+        ctx.quadraticCurveTo(x + c * w, y - hh * 0.4, x + c * w, y + c * 0.45);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  // A crackle of blue sparks over something knocked out by an EMP.
+  function drawEmpSpark(x, y, r) {
+    const now = performance.now();
+    ctx.strokeStyle = `rgba(125,211,252,${0.5 + 0.4 * Math.sin(now / 60)})`;
+    ctx.lineWidth = 1.3 * view.dpr;
+    ctx.beginPath();
+    for (let k = 0; k < 3; k++) {
+      const a = ((now / 150 + k * 2.1) % (Math.PI * 2));
+      ctx.moveTo(x + Math.cos(a) * r * 0.3, y + Math.sin(a) * r * 0.3);
+      ctx.lineTo(x + Math.cos(a + 0.4) * r * 0.8, y + Math.sin(a + 0.4) * r * 0.8);
+      ctx.lineTo(x + Math.cos(a) * r * 1.1, y + Math.sin(a) * r * 1.1);
+    }
+    ctx.stroke();
+  }
+
+  function drawAmbushes(now) {
+    for (const x of G.ambushes) {
+      if (!allied(x.owner, myId)) continue;
+      const px = sx(cx(x.cell) + 0.5);
+      const py = sy(cy(x.cell) + 0.5);
+      const r = x.r * view.cell;
+      if (!onScreen(px, py, r)) continue;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(134,239,172,${0.5 + 0.3 * Math.sin(now / 200)})`;
+      ctx.lineWidth = 2 * view.dpr;
+      ctx.setLineDash([6 * view.dpr, 4 * view.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
   function drawWalls() {
     if (!G.walls.length) return;
     const w = Math.max(3 * view.dpr, view.cell * 1.2);
@@ -4005,6 +4711,7 @@
       if (!onScreen(x, y, size)) continue;
       drawIcon(b.type, x, y, size, G.factions[b.owner].css);
       if (b.level > 1) drawLevel(b.level, x + size * 0.42, y - size * 0.42, size * 0.42);
+      if ((b.empUntil || 0) > G.time) drawEmpSpark(x, y, size * 0.6);
       if (b.type === 'fort' && b.owner === myId && G.mode) {
         ctx.beginPath();
         ctx.arc(x, y, sc(FORT_RADIUS[b.level - 1]) * view.cell, 0, Math.PI * 2);
@@ -4105,6 +4812,15 @@
       ctx.fillRect(x - 3.6 * u, y + 2.6 * u, 7.2 * u, 1.2 * u);
     } else if (type === 'airfield') {
       planeShape(x, y, u, 0);
+    } else if (type === 'railgun') {
+      // A long gun on a railway wagon.
+      ctx.fillRect(x - 4 * u, y + 2.2 * u, 8 * u, 1 * u);
+      ctx.fillRect(x - 3 * u, y + 0.6 * u, 6 * u, 1.6 * u);
+      ctx.save();
+      ctx.translate(x - 1 * u, y + 0.8 * u);
+      ctx.rotate(-0.45);
+      ctx.fillRect(0, -0.7 * u, 6 * u, 1.4 * u);
+      ctx.restore();
     } else if (type === 'coastal') {
       // A gun barrel angled out to sea, over a wave.
       ctx.save();
@@ -4227,8 +4943,19 @@
       const x = sx(gx);
       const y = sy(gy);
       if (!onScreen(x, y, 30 * u)) continue;
-      const selected = G.mode && G.mode.type === 'ship' && G.mode.id === sh.id;
+      const sub = SHIPS[sh.type].sub;
+      if (sub && !subVisible(sh, myId)) continue;
+      const selected = G.mode && (G.mode.type === 'ship' || G.mode.type === 'sub') && G.mode.id === sh.id;
       const end = sh.voyage ? sh.voyage.end : sh.endCell;
+      if (selected && G.mode.type === 'sub') {
+        ctx.beginPath();
+        ctx.arc(x, y, sc(SUB_RANGE) * view.cell, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(220,230,255,0.75)';
+        ctx.lineWidth = 2 * view.dpr;
+        ctx.setLineDash([8 * view.dpr, 6 * view.dpr]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (selected && end >= 0 && end !== undefined) {
         ctx.beginPath();
         ctx.moveTo(x, y);
@@ -4239,10 +4966,28 @@
         ctx.stroke();
         ctx.setLineDash([]);
       }
-      const len = sh.type === 'carrier' ? 7 : 5;
+      const len = sh.type === 'carrier' || sh.type === 'dreadnought' ? 7 : 5;
+      const emp = (sh.empUntil || 0) > G.time;
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(angle);
+      if (sub) {
+        // A dark cigar-shaped hull with a conning tower, half under water
+        // while hidden (only its own side sees it then).
+        const hidden = (sh.revealUntil || 0) <= G.time;
+        ctx.globalAlpha = hidden ? 0.55 : 1;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, len * u, 1.3 * u, 0, 0, Math.PI * 2);
+        ctx.fillStyle = '#1f2937';
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, 0.6 * u);
+        ctx.strokeStyle = G.factions[sh.owner].css;
+        ctx.stroke();
+        ctx.fillStyle = G.factions[sh.owner].css;
+        ctx.fillRect(-0.4 * u, -0.8 * u, 2 * u, 1.6 * u);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      } else {
       ctx.beginPath();
       ctx.moveTo(len * u, 0);
       ctx.lineTo(len * u * 0.6, -1.7 * u);
@@ -4266,6 +5011,8 @@
         ctx.fillRect(1.6 * u, -0.25 * u, 2.6 * u, 0.5 * u);
       }
       ctx.restore();
+      }
+      if (emp) drawEmpSpark(x, y, len * u);
       if (selected) {
         ctx.beginPath();
         ctx.arc(x, y, (len + 2.5) * u, 0, Math.PI * 2);
@@ -4298,12 +5045,15 @@
       if (!onScreen(a.x, a.y, 20 * u)) continue;
       // Bombers are bigger and dark, with the owner's colour as a trim.
       const bomber = p.kind === 'strike';
+      // Stealth bombers are barely visible.
+      ctx.globalAlpha = p.stealth ? 0.35 : 1;
       ctx.fillStyle = bomber ? '#1f2937' : G.factions[p.owner].css;
       planeShape(a.x, a.y, bomber ? u * 1.4 : u, Math.atan2(b.x - a.x, a.y - b.y));
       if (bomber) {
         ctx.fillStyle = G.factions[p.owner].css;
         planeShape(a.x, a.y, u * 0.6, Math.atan2(b.x - a.x, a.y - b.y));
       }
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -4450,13 +5200,78 @@
     ctx.globalAlpha = 1;
   }
 
+  // A Viking longship: dragon prow, a row of shields in the owner's colour,
+  // a striped sail and oars that sweep as it rows. Faces where it's heading.
+  function drawLongship(b, x, y, u, now) {
+    const ahead = b.x - (b.dx ?? b.x);
+    if (Math.abs(ahead) > 0.01) b.face = ahead < 0 ? -1 : 1;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(b.face || 1, 1);
+    // Oars, behind the hull.
+    ctx.strokeStyle = '#d6a15e';
+    ctx.lineWidth = Math.max(1, 0.6 * u);
+    for (let k = 0; k < 4; k++) {
+      const ox = -3.6 * u + k * 2.4 * u;
+      const swing = Math.sin(now / 160 + k * 0.4) * 1.3 * u;
+      ctx.beginPath();
+      ctx.moveTo(ox, 1.6 * u);
+      ctx.lineTo(ox - 1.2 * u + swing, 4.6 * u);
+      ctx.stroke();
+    }
+    // Hull, curling up into a dragon's head at the bow and a tail at the stern.
+    ctx.beginPath();
+    ctx.moveTo(-6 * u, 0.4 * u);
+    ctx.quadraticCurveTo(-7.4 * u, -1.6 * u, -6.6 * u, -3 * u);
+    ctx.quadraticCurveTo(-6.2 * u, -1 * u, -4.8 * u, 0.4 * u);
+    ctx.lineTo(4.8 * u, 0.4 * u);
+    ctx.quadraticCurveTo(6.4 * u, -1.2 * u, 6.8 * u, -3.4 * u);
+    ctx.quadraticCurveTo(8 * u, -3.6 * u, 7.6 * u, -2.4 * u);
+    ctx.quadraticCurveTo(7.2 * u, -0.4 * u, 6 * u, 0.6 * u);
+    ctx.quadraticCurveTo(4.4 * u, 3 * u, 0, 3 * u);
+    ctx.quadraticCurveTo(-4.4 * u, 3 * u, -6 * u, 0.4 * u);
+    ctx.closePath();
+    ctx.fillStyle = '#7c4a1e';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1, 0.5 * u);
+    ctx.stroke();
+    // Mast and striped sail.
+    ctx.beginPath();
+    ctx.moveTo(0, 0.4 * u);
+    ctx.lineTo(0, -6.4 * u);
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = Math.max(1, 0.5 * u);
+    ctx.stroke();
+    for (let k = 0; k < 6; k++) {
+      ctx.fillStyle = k % 2 ? '#fff' : '#dc2626';
+      ctx.fillRect(-3 * u + k * u, -5.8 * u, u, 4 * u);
+    }
+    // Round shields along the side.
+    for (const sxp of [-3.6, -1.2, 1.2, 3.6]) {
+      ctx.beginPath();
+      ctx.arc(sxp * u, 0.9 * u, 0.85 * u, 0, Math.PI * 2);
+      ctx.fillStyle = G.factions[b.owner].css;
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1, 0.3 * u);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawBoats() {
     const size = clamp(view.cell * 2.4, 14 * view.dpr, 26 * view.dpr);
+    const now = performance.now();
     for (const b of G.boats) {
       const x = sx(b.dx ?? b.x);
       const y = sy(b.dy ?? b.y);
       if (!onScreen(x, y, size)) continue;
       const u = size / 10;
+      if (b.viking) {
+        drawLongship(b, x, y, u * 1.5, now);
+        continue;
+      }
       ctx.fillStyle = G.factions[b.owner].css;
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = Math.max(1, u * 0.8);
@@ -4541,26 +5356,30 @@
     }
     for (const m of G.missiles) {
       const t = Math.min(1, (m.t + acc) / m.dur);
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = 2 * dpr;
+      const at = (k) => {
+        const q = missilePoint(m, k);
+        return { x: sx(q.x), y: sy(q.y) };
+      };
+      ctx.strokeStyle = m.bomb ? 'rgba(255,200,120,0.5)' : m.emp ? 'rgba(160,210,255,0.7)' : 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = (m.part ? 1.2 : 2) * dpr;
       ctx.beginPath();
       for (let k = 0; k <= 12; k++) {
-        const q = arcPoint(m.from, m.to, t * k / 12, 0.45);
+        const q = at(t * k / 12);
         if (k === 0) ctx.moveTo(q.x, q.y);
         else ctx.lineTo(q.x, q.y);
       }
       ctx.stroke();
-      const p = arcPoint(m.from, m.to, t, 0.45);
+      const p = at(t);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, (m.tsar ? 9 : 5) * dpr, 0, Math.PI * 2);
-      ctx.fillStyle = m.tsar ? '#fbbf24' : '#ef4444';
+      ctx.arc(p.x, p.y, (m.tsar ? 9 : m.bomb ? 2.2 : m.part || m.cruise ? 3.5 : 5) * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = m.tsar ? '#fbbf24' : m.bomb ? '#f97316' : m.emp ? '#7dd3fc' : m.cruise ? '#e5e7eb' : '#ef4444';
       ctx.fill();
       // Target marker so everyone can see where it will land.
-      const tx = sx(cx(m.from) + 0.5 + ddx(m.to, m.from));
-      const ty = sy(cy(m.to) + 0.5);
+      if (m.bomb) continue;
+      const end = at(1);
       ctx.beginPath();
-      ctx.arc(tx, ty, m.radius * view.cell, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(239,68,68,0.8)';
+      ctx.arc(end.x, end.y, m.radius * view.cell, 0, Math.PI * 2);
+      ctx.strokeStyle = m.emp ? 'rgba(125,211,252,0.85)' : 'rgba(239,68,68,0.8)';
       ctx.setLineDash([6 * dpr, 5 * dpr]);
       ctx.stroke();
       ctx.setLineDash([]);
@@ -4666,9 +5485,11 @@
       drawDeposits();
       drawCrates();
       drawWalls();
+      drawAmbushes(now);
       drawBuildings();
       drawBoats();
       drawShips();
+      drawFires(now);
       drawPlanes();
       drawProjectiles();
       drawInterceptors();
@@ -4695,7 +5516,8 @@
       btn.classList.add('hidden');
       banner.dataset.kind = 'spawn';
     } else if (G.state === 'spawn') {
-      text.innerHTML = G.real ? '<strong>Tap a country</strong> to lead it' : '<strong>Tap the map</strong> to place your capital';
+      text.innerHTML = (G.real ? '<strong>Tap a country</strong> to lead it' : '<strong>Tap the map</strong> to place your capital')
+        + ' <button class="perks-link" data-perks="1">🌍 Perks</button>';
       btn.textContent = 'Random';
       btn.classList.remove('hidden');
       banner.dataset.kind = 'spawn';
@@ -4704,8 +5526,14 @@
       text.innerHTML = `<strong>Tap your land</strong> to place ${b.icon} ${b.label}`;
       btn.textContent = 'Cancel';
       banner.dataset.kind = 'mode';
+    } else if (G.mode && G.mode.type === 'sub') {
+      const w = SUB_WEAPONS[G.mode.w];
+      text.innerHTML = `<strong>Tap enemy land</strong> within ${SUB_RANGE} cells for a ${w ? `${w.icon} ${w.label.toLowerCase()}` : 'missile'}`;
+      btn.textContent = 'Cancel';
+      banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'nuke') {
-      text.innerHTML = '<strong>Tap a target</strong> to nuke ☢';
+      text.innerHTML = G.mode.kind === 'cnuke' ? '<strong>Tap a target</strong> for a cluster nuke ☢'
+        : G.mode.kind === 'emp' ? '<strong>Tap a target</strong> for an EMP strike ⚡' : '<strong>Tap a target</strong> to nuke ☢';
       btn.textContent = 'Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'tsar') {
@@ -4717,8 +5545,15 @@
       text.innerHTML = `<strong>Tap the sea</strong> to send your ${sh ? SHIPS[sh.type].label.toLowerCase() : 'ship'}`;
       btn.textContent = 'Cancel';
       banner.dataset.kind = 'mode';
+    } else if (G.mode && G.mode.type === 'special') {
+      const spec = specialOf(G.factions[myId]);
+      const where = { own: 'Tap your land', coast: 'Tap an enemy coast', enemy: 'Tap enemy land' }[spec && spec.target] || 'Tap the map';
+      text.innerHTML = `<strong>${where}</strong> for the ${spec ? `${spec.icon} ${spec.label}` : 'special'}`;
+      btn.textContent = 'Cancel';
+      banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'strike') {
-      text.innerHTML = `<strong>Tap a target</strong> for an air strike 💣 (${STRIKE_COST}g)`;
+      text.innerHTML = G.mode.napalm ? `<strong>Tap enemy land</strong> for a napalm strike 🔥 (${NAPALM_COST}g)`
+        : `<strong>Tap a target</strong> for an air strike 💣 (${STRIKE_COST}g)`;
       btn.textContent = 'Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'para') {
@@ -4743,9 +5578,9 @@
     const nuke = $('btn-nuke');
     nuke.classList.toggle('hidden', !me.built.silo);
     const reload = me.silosReady ? 0 : Math.ceil(me.nextNuke - G.time);
-    nuke.disabled = me.gold < NUKE_COST || reload > 0 || G.state !== 'play';
+    nuke.disabled = me.gold < Math.min(NUKE_COST, EMP_COST) || reload > 0 || G.state !== 'play';
     nuke.textContent = reload > 0 ? `☢ ${reload}s`
-      : `☢ ${NUKE_COST}g${me.silosReady > 1 ? ` ×${me.silosReady}` : ''}`;
+      : `☢ Launch${me.silosReady > 1 ? ` ×${me.silosReady}` : ''}`;
     const tsar = $('btn-tsar');
     tsar.classList.toggle('hidden', (me.siloLevel || 0) < 3);
     const tsarWait = Math.ceil((me.nextTsar || 0) - G.time);
@@ -4756,6 +5591,14 @@
     const airWait = me.airReady ? 0 : Math.ceil(me.nextAir - G.time);
     para.disabled = airWait > 0 || G.state !== 'play';
     para.textContent = airWait > 0 ? `✈ ${airWait}s` : '✈ Air';
+    const special = $('btn-special');
+    const spec = specialOf(me);
+    special.classList.toggle('hidden', !spec || me.capital < 0);
+    if (spec) {
+      const wait = Math.ceil((me.nextSpecial || 0) - G.time);
+      special.textContent = wait > 0 ? `${spec.icon} ${wait}s` : `⭐ ${spec.icon}`;
+      special.classList.toggle('ready', wait <= 0);
+    }
 
     const mine = G.attacks.filter((a) => a.from === myId);
     const boats = G.boats.filter((b) => b.owner === myId);
@@ -4831,6 +5674,111 @@
     $('build-sheet').classList.add('show');
   }
 
+  // ⭐ Your perk and special weapon.
+  function openSpecialSheet() {
+    if (!G || G.state !== 'play') return;
+    sheetBuilding = null;
+    sheetMode = 'special';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderSpecialSheet() {
+    const me = G.factions[myId];
+    const pk = PERKS[me.perk];
+    const spec = specialOf(me);
+    if (!pk || !spec) {
+      closeBuildSheet();
+      return;
+    }
+    const wait = Math.ceil((me.nextSpecial || 0) - G.time);
+    $('sheet-title').textContent = `⭐ ${spec.icon} ${spec.label}`;
+    const cost = spec === SPECIALS.mercs ? `${fmt(MERC_COST)}g` : wait > 0 ? `${wait}s` : 'Ready';
+    listOut.html = `<p class="now">${pk.icon} <b>${pk.label}:</b> ${pk.text}.</p>`
+      + `<button data-special="1" ${wait > 0 ? 'disabled' : ''}><span class="bi">${spec.icon}</span>`
+      + `<span class="bt"><b>${spec.target ? 'Choose a target' : `Use ${spec.label}`}</b><small>${spec.text}</small></span>`
+      + `<span class="bc">${cost}</span></button>`
+      + `<p class="now">Cooldown ${spec.cooldown >= 60 ? `${spec.cooldown / 60} min` : `${spec.cooldown}s`} after each use.</p>`;
+  }
+
+  // ☢ Silo weapons: a nuke, a cluster nuke (level 2 silo) or an EMP.
+  function openNukeSheet() {
+    if (!G || G.state !== 'play') return;
+    sheetBuilding = null;
+    sheetMode = 'nukes';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderNukeSheet() {
+    const me = G.factions[myId];
+    $('sheet-title').textContent = '☢ Silo launch';
+    const opts = [
+      ['nuke', '☢', 'Nuke', NUKE_COST, 'One big blast. Bigger from higher-level silos', true],
+      ['cnuke', '☢', 'Cluster nuke', CLUSTER_NUKE_COST, `Splits into ${CLUSTER_WARHEADS} warheads spread round the target: a wider area, and SAMs must stop each one. Needs a level 2 silo`, me.siloLevel >= 2],
+      ['emp', '⚡', 'EMP strike', EMP_COST, `Knocks out enemy SAMs, guns, airfields, silos and ships for ${EMP_TIME}s. Clears the way for an attack`, true],
+    ];
+    const wait = Math.ceil((me.nextNuke || 0) - G.time);
+    listOut.html = opts.map(([k, icon, label, cost, text, ok]) => `<button data-nk="${k}" ${!ok || me.gold < cost ? 'disabled' : ''}>`
+      + `<span class="bi">${icon}</span><span class="bt"><b>${label}</b><small>${text}</small></span>`
+      + `<span class="bc">${fmt(cost)}g</span></button>`).join('')
+      + `<p class="now">${me.silosReady ? 'A silo is ready to launch.' : wait > 0 ? `Silos reloading: ${wait}s.` : ''} SAM sites can shoot missiles down.</p>`;
+  }
+
+  // 🐋 One of your submarines: move it, or fire.
+  let sheetSub = -1;
+  function openSubSheet(sh) {
+    sheetBuilding = null;
+    sheetSub = sh.id;
+    sheetMode = 'sub';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderSubSheet() {
+    const me = G.factions[myId];
+    const sh = G.ships.find((x) => x.id === sheetSub && x.owner === myId);
+    if (!sh) {
+      closeBuildSheet();
+      return;
+    }
+    const wait = Math.ceil((sh.readyAt || 0) - G.time);
+    $('sheet-title').textContent = `🐋 Submarine · ${sh.hp} of ${SHIPS.submarine.hp} hull`;
+    let html = '<button data-subw="move"><span class="bi">🧭</span><span class="bt"><b>Move</b>'
+      + '<small>Then tap the sea to send it there. Stays hidden unless it fires or nears enemy warships or coastal guns</small></span><span class="bc"></span></button>';
+    for (const [k, w] of Object.entries(SUB_WEAPONS)) {
+      const ok = (!w.silo || me.siloLevel >= w.silo) && me.gold >= w.cost && wait <= 0;
+      html += `<button data-subw="${k}" ${ok ? '' : 'disabled'}><span class="bi">${w.icon}</span>`
+        + `<span class="bt"><b>${w.label}</b><small>${w.text}</small></span><span class="bc">${fmt(w.cost)}g</span></button>`;
+    }
+    html += `<p class="now">${wait > 0 ? `Reloading: ${wait}s. ` : ''}Range ${SUB_RANGE} cells. Firing shows the sub to everyone for ${SUB_REVEAL}s.</p>`;
+    listOut.html = html;
+  }
+
+  // While choosing a country: what each region brings.
+  function openPerksSheet() {
+    if (!G) return;
+    sheetBuilding = null;
+    sheetMode = 'perks';
+    renderBuildSheet();
+    $('build-sheet').classList.add('show');
+  }
+
+  function renderPerksSheet() {
+    $('sheet-title').textContent = '🌍 National perks';
+    const lists = REGION_LISTS[G.kind];
+    const keys = lists ? Object.keys(lists) : Object.keys(PERKS).filter((k) => k !== 'stealth');
+    listOut.html = keys.map((k) => {
+      const pk = PERKS[k];
+      const spec = SPECIALS[pk.special];
+      const where = lists ? lists[k].slice(0, 5).join(', ') + (lists[k].length > 5 ? '…' : '') : '';
+      return `<div class="perk-row"><b>${pk.icon} ${pk.label}</b>${where ? ` <small>${where}</small>` : ''}`
+        + `<small>${pk.text}. ⭐ ${spec.icon} <b>${spec.label}:</b> ${spec.text}.</small></div>`;
+    }).join('')
+      + `<p class="now">${lists ? (G.kind === 'world' ? 'Anywhere not listed (most of Africa) gets 💰 Trade.' : '')
+        : 'On a random map each nation gets a random perk.'}</p>`;
+  }
+
   // Tapping a gold deposit on our land: build a mine right there.
   let sheetDeposit = -1;
   function openDepositSheet(cell) {
@@ -4903,8 +5851,10 @@
     const truce = !ally && inTruce(myId, o.id);
     $('sheet-title').textContent = `🤝 ${o.name}${o.isPlayer ? '' : ` · ${levelLabel(o.level || settings.difficulty)} AI`}`;
     const status = ally ? '🤝 Your ally' : truce ? `⏸ Ceasefire: war resumes in ${Math.ceil(G.truce[pair(myId, o.id)] - G.time)}s` : 'Not allied';
+    const opk = PERKS[o.perk];
     let html = '<button class="secondary small back-btn" data-back="1">‹ All nations</button>'
-      + `<p class="now">${status} · ${fmt(o.troops)} troops · ${(o.cells / G.landCells * 100).toFixed(1)}% of the land</p>`;
+      + `<p class="now">${status} · ${fmt(o.troops)} troops · ${(o.cells / G.landCells * 100).toFixed(1)}% of the land</p>`
+      + (opk ? `<p class="now">${opk.icon} ${opk.label} · ⭐ ${SPECIALS[opk.special].icon} ${SPECIALS[opk.special].label}</p>` : '');
     if (!o.isPlayer) {
       const r = relOf(o.id, myId);
       const label = relLabel(r);
@@ -4944,6 +5894,22 @@
       renderDepositSheet();
       return;
     }
+    if (sheetMode === 'special') {
+      renderSpecialSheet();
+      return;
+    }
+    if (sheetMode === 'perks') {
+      renderPerksSheet();
+      return;
+    }
+    if (sheetMode === 'nukes') {
+      renderNukeSheet();
+      return;
+    }
+    if (sheetMode === 'sub') {
+      renderSubSheet();
+      return;
+    }
     const me = G.factions[myId];
     const b = sheetBuilding && G.buildings.get(sheetBuilding);
     if (sheetBuilding && (!b || b.owner !== myId)) {
@@ -4956,6 +5922,8 @@
         + `<small>Drop ${settings.pct}% of your troops on land in range</small></span><span class="bc">Free</span></button>`
         + `<button data-air="strike" ${me.gold < STRIKE_COST ? 'disabled' : ''}><span class="bi">💣</span><span class="bt"><b>Air strike</b>`
         + `<small>Carpet-bomb an area or enemy ships: kills troops, wrecks buildings, sinks boats</small></span><span class="bc">${STRIKE_COST}g</span></button>`
+        + `<button data-air="strike" data-napalm="1" ${me.gold < NAPALM_COST ? 'disabled' : ''}><span class="bi">🔥</span><span class="bt"><b>Napalm strike</b>`
+        + `<small>Sets enemy land alight: fires burn for ${NAPALM_BURN}s and spread a little</small></span><span class="bc">${NAPALM_COST}g</span></button>`
         + '<p class="now">Both use a ready airfield or carrier in range. SAM sites can shoot planes down.</p>';
       return;
     }
@@ -4974,28 +5942,32 @@
       if (b.type === 'fort') {
         const mine = wallsOf(b).length;
         html += `<p class="now">🧱 Walls: ${mine} of ${WALLS_PER_FORT}. A wall joins two forts up to `
-          + `${Math.round(sc(WALL_MAX))} cells apart into one big fort: land along the wall, out to the weaker fort's range, is defended like a fort's. `
+          + `${Math.round(wallReach(me))} cells apart into one big fort: land along the wall, out to the weaker fort's range, is defended like a fort's. `
           + 'The wall holds out under siege like a fort and shrugs off shells and bombs, but comes down if it is overrun, nuked or loses a fort.</p>';
         if (mine < WALLS_PER_FORT) {
           const options = wallTargets(b).filter((t) => wallsOf(t.fort).length < WALLS_PER_FORT);
           if (!options.length) html += '<p class="now">Build another fort within reach (joined to this one by your land) to wall them together.</p>';
           for (const { fort: o, route } of options.slice(0, 4)) {
-            html += `<button data-wall="${o.id}" data-from="${b.id}" ${me.gold < WALL_COST ? 'disabled' : ''}>`
+            html += `<button data-wall="${o.id}" data-from="${b.id}" ${me.gold < wallCost(me) ? 'disabled' : ''}>`
               + `<span class="bi">🧱</span><span class="bt"><b>Wall to level ${o.level} fort</b>`
               + `<small>${compass(b.cell, o.cell)}, a ${route.length}-cell wall along your land</small></span>`
-              + `<span class="bc">${WALL_COST}g</span></button>`;
+              + `<span class="bc">${wallCost(me)}g</span></button>`;
           }
         }
       }
       if (b.type === 'shipyard') {
         html += `<p class="now">Fleet: ${me.ships || 0} of ${me.shipCap || 0} ships</p>`;
         for (const [kind, spec] of Object.entries(SHIPS)) {
+          if (spec.special) continue;
           const desc = kind === 'battleship'
             ? `Shells enemy ships, boats and coasts within ${spec.range} cells. ${spec.hp} hits to sink`
-            : `A mobile airfield for paradrops. ${spec.hp} hits to sink`;
-          html += `<button data-ship="${kind}" data-yard="${b.id}" ${me.gold < spec.cost || me.ships >= me.shipCap ? 'disabled' : ''}>`
+            : kind === 'submarine'
+              ? `${b.level < spec.yard ? `Needs a level ${spec.yard} shipyard. ` : ''}Hidden; fires cruise missiles, cluster bombs, EMPs and nukes ${SUB_RANGE} cells inland`
+              : `A mobile airfield for paradrops. ${spec.hp} hits to sink`;
+          const can = me.gold >= shipCost(me, kind) && me.ships < me.shipCap && (!spec.yard || b.level >= spec.yard);
+          html += `<button data-ship="${kind}" data-yard="${b.id}" ${can ? '' : 'disabled'}>`
             + `<span class="bi">${spec.icon}</span><span class="bt"><b>Build ${spec.label.toLowerCase()}</b>`
-            + `<small>${desc}</small></span><span class="bc">${fmt(spec.cost)}g</span></button>`;
+            + `<small>${desc}</small></span><span class="bc">${fmt(shipCost(me, kind))}g</span></button>`;
         }
         html += '<p class="now">Tap one of your ships, then tap the sea to send it there.</p>';
       }
@@ -5365,6 +6337,14 @@
     else openBuildSheet();
   });
   $('btn-build-close').addEventListener('click', closeBuildSheet);
+  $('btn-special').addEventListener('click', () => {
+    if (!G || G.state !== 'play') return;
+    if ($('build-sheet').classList.contains('show') && sheetMode === 'special') closeBuildSheet();
+    else openSpecialSheet();
+  });
+  $('banner').addEventListener('click', (e) => {
+    if (e.target.closest('[data-perks]')) openPerksSheet();
+  });
   $('btn-diplo').addEventListener('click', () => {
     if (!G || G.state !== 'play') return;
     if ($('build-sheet').classList.contains('show') && (sheetMode === 'diplist' || sheetMode === 'diplo')) closeBuildSheet();
@@ -5382,13 +6362,36 @@
       return;
     }
     if (b.dataset.air) {
-      G.mode = { type: b.dataset.air };
+      G.mode = { type: b.dataset.air, napalm: !!b.dataset.napalm };
+      closeBuildSheet();
+      updateBanner();
+      return;
+    }
+    if (b.dataset.nk) {
+      G.mode = { type: 'nuke', kind: b.dataset.nk };
+      closeBuildSheet();
+      updateBanner();
+      return;
+    }
+    if (b.dataset.subw) {
+      G.mode = b.dataset.subw === 'move' ? { type: 'ship', id: sheetSub } : { type: 'sub', id: sheetSub, w: b.dataset.subw };
       closeBuildSheet();
       updateBanner();
       return;
     }
     if (b.dataset.ship) {
       perform({ a: 'ship', id: Number(b.dataset.yard), kind: b.dataset.ship }, () => renderBuildSheet());
+      return;
+    }
+    if (b.dataset.special) {
+      const spec = specialOf(G.factions[myId]);
+      if (spec && spec.target) {
+        G.mode = { type: 'special' };
+        closeBuildSheet();
+        updateBanner();
+      } else {
+        perform({ a: 'special' }, () => renderBuildSheet());
+      }
       return;
     }
     if (b.dataset.mine) {
@@ -5430,14 +6433,17 @@
     if ($('build-sheet').classList.contains('show') && sheetMode === 'air') closeBuildSheet();
     else openAirSheet();
   });
-  for (const [id, type] of [['btn-nuke', 'nuke'], ['btn-tsar', 'tsar']]) {
-    $(id).addEventListener('click', () => {
-      if (!G || G.state !== 'play') return;
-      closeBuildSheet();
-      G.mode = { type };
-      updateBanner();
-    });
-  }
+  $('btn-nuke').addEventListener('click', () => {
+    if (!G || G.state !== 'play') return;
+    if ($('build-sheet').classList.contains('show') && sheetMode === 'nukes') closeBuildSheet();
+    else openNukeSheet();
+  });
+  $('btn-tsar').addEventListener('click', () => {
+    if (!G || G.state !== 'play') return;
+    closeBuildSheet();
+    G.mode = { type: 'tsar' };
+    updateBanner();
+  });
 
   function pause() {
     if (!G || G.demo || (G.state !== 'play' && G.state !== 'spawn')) return;
@@ -6092,17 +7098,23 @@
         t: [...G.truce.keys()].filter((k) => G.truce[k] > G.time).map((k) => [k, Math.round((G.truce[k] - G.time) * 10) / 10]),
       } : null,
       f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
-        Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0]),
+        Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0, f.perk || '',
+        Math.max(0, Math.round((f.nextSpecial || 0) - G.time))]),
       b: full || G.bver !== net.sentBver
-        ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp, b.readyAt || 0]) : null,
+        ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp, b.readyAt || 0, b.empUntil || 0]) : null,
       walls: full || G.bver !== net.sentBver ? G.walls.map((w) => [w.id, w.a, w.b, w.owner, w.path]) : null,
-      boats: G.boats.map((b) => [b.id, b.owner, Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, Math.round(b.troops)]),
+      boats: G.boats.map((b) => [b.id, b.owner, Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, Math.round(b.troops), b.viking ? 1 : 0]),
+      amb: G.ambushes.map((x) => [x.owner, x.cell, x.r, Math.round((x.until - G.time) * 10) / 10]),
       shells: G.shells.map((s) => [s.from, s.to, s.t, s.dur]),
-      missiles: G.missiles.map((m) => [m.from, m.to, m.t, m.dur, m.radius, m.tsar ? 1 : 0]),
-      planes: G.planes.map((p) => [p.owner, p.from, p.to, p.t, p.dur, p.kind === 'strike' ? 1 : 0, p.returning ? 1 : 0]),
+      missiles: G.missiles.map((m) => [m.from, m.to, m.t, m.dur, m.radius, m.tsar ? 1 : 0,
+        (m.cruise ? 1 : 0) | (m.cluster ? 2 : 0) | (m.part ? 4 : 0) | (m.bomb ? 8 : 0) | (m.emp ? 16 : 0),
+        m.px === undefined ? null : Math.round(m.px * 10) / 10, m.py === undefined ? null : Math.round(m.py * 10) / 10]),
+      fires: G.fires.map((x) => [x.cell, Math.round((x.until - G.time) * 10) / 10]),
+      planes: G.planes.map((p) => [p.owner, p.from, p.to, p.t, p.dur, p.kind === 'strike' ? 1 : 0, p.returning ? 1 : 0, p.stealth ? 1 : 0]),
       interceptors: G.interceptors.map((i) => [i.owner, i.from, Math.round(i.hx * 10) / 10, Math.round(i.hy * 10) / 10, i.t, i.dur]),
       ships: G.ships.map((sh) => [sh.id, sh.owner, sh.type, Math.round(sh.x * 10) / 10, Math.round(sh.y * 10) / 10,
-        Math.round((sh.angle || 0) * 100) / 100, sh.hp, sh.readyAt || 0, sh.voyage ? sh.voyage.end : -1]),
+        Math.round((sh.angle || 0) * 100) / 100, sh.hp, sh.readyAt || 0, sh.voyage ? sh.voyage.end : -1,
+        sh.revealUntil || 0, sh.empUntil || 0]),
       crates: G.crates,
       attacks: G.attacks.map((a) => [a.from, a.to, Math.round(a.troops), a.aimX, a.aimY]),
       fx: G.fxEvents,
@@ -6418,14 +7430,16 @@
       f.kills = v[5];
       f.name = v[6];
       f.isPlayer = !!v[7];
+      if (v[8]) f.perk = v[8];
+      f.nextSpecial = G.time + (v[9] || 0);
       if (s.st && s.st[id]) f.stats = Object.fromEntries(STATS.map(([k], j) => [k, s.st[id][j]]));
     });
     if (s.b) {
       for (const b of G.buildings.values()) G.bAt[b.cell] = -1;
       G.buildings = new Map();
       for (const f of G.factions) for (const k of Object.keys(f.built)) f.built[k] = 0;
-      for (const [id, type, cell, owner, level, hp, readyAt] of s.b) {
-        G.buildings.set(id, { id, type, cell, owner, level, hp, readyAt });
+      for (const [id, type, cell, owner, level, hp, readyAt, empUntil] of s.b) {
+        G.buildings.set(id, { id, type, cell, owner, level, hp, readyAt, empUntil });
         G.bAt[cell] = id;
         G.factions[owner].built[type]++;
       }
@@ -6440,21 +7454,27 @@
     }
     // Keep each boat's and ship's drawn position so it can glide to the new one.
     const oldBoats = new Map(G.boats.map((b) => [b.id, b]));
-    G.boats = s.boats.map(([id, owner, x, y, troops]) => {
+    G.boats = s.boats.map(([id, owner, x, y, troops, viking]) => {
       const b = oldBoats.get(id) || { id };
-      return Object.assign(b, { owner, x, y, troops, cell: cellAtXY(x, y) });
+      return Object.assign(b, { owner, x, y, troops, cell: cellAtXY(x, y), viking: !!viking });
     });
     G.shells = s.shells.map(([from, to, t, dur]) => ({ from, to, t, dur }));
-    G.missiles = s.missiles.map(([from, to, t, dur, radius, tsar]) => ({ from, to, t, dur, radius, tsar: !!tsar }));
-    G.planes = (s.planes || []).map(([owner, from, to, t, dur, strike, returning]) => ({
-      owner, from, to, t, dur, kind: strike ? 'strike' : 'para', returning: !!returning,
+    G.missiles = s.missiles.map(([from, to, t, dur, radius, tsar, fl, px, py]) => {
+      const m = { from, to, t, dur, radius, tsar: !!tsar, cruise: !!(fl & 1), cluster: !!(fl & 2), part: !!(fl & 4), bomb: !!(fl & 8), emp: !!(fl & 16) };
+      if (px != null) Object.assign(m, { px, py });
+      return m;
+    });
+    G.fires = (s.fires || []).map(([cell, left]) => ({ cell, until: G.time + left }));
+    G.planes = (s.planes || []).map(([owner, from, to, t, dur, strike, returning, stealth]) => ({
+      owner, from, to, t, dur, kind: strike ? 'strike' : 'para', returning: !!returning, stealth: !!stealth,
     }));
+    if (s.amb) G.ambushes = s.amb.map(([owner, cell, r, left]) => ({ owner, cell, r, until: G.time + left }));
     G.interceptors = (s.interceptors || []).map(([owner, from, hx, hy, t, dur]) => ({ owner, from, hx, hy, t, dur }));
     // Joiners draw each ship heading for its next cell, with its destination.
     const oldShips = new Map(G.ships.map((sh) => [sh.id, sh]));
-    G.ships = (s.ships || []).map(([id, owner, type, x, y, angle, hp, readyAt, end]) => {
+    G.ships = (s.ships || []).map(([id, owner, type, x, y, angle, hp, readyAt, end, revealUntil, empUntil]) => {
       const sh = oldShips.get(id) || { id };
-      return Object.assign(sh, { owner, type, x, y, angle, hp, readyAt, endCell: end, cell: cellAtXY(x, y) });
+      return Object.assign(sh, { owner, type, x, y, angle, hp, readyAt, endCell: end, cell: cellAtXY(x, y), revealUntil, empUntil });
     });
     G.crates = s.crates || [];
     G.attacks = s.attacks.map(([from, to, troops, aimX, aimY]) => ({ from, to, troops, aimX, aimY }));
@@ -6563,6 +7583,11 @@
     build,
     launchNuke,
     launchBoat,
+    buildShip,
+    fireSub,
+    subVisible,
+    launchStrike,
+    centreOn: (i) => centreOn(i),
     upgrade,
   };
 

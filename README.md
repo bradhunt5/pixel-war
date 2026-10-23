@@ -89,6 +89,22 @@ out the land under a standing wall: the wall absorbs them. A nuke landing on
 the wall line does destroy it, as does losing either fort (artillery can
 still wear a fort down) or any of the land under the wall.
 
+**🌍 National perks:** every nation gets a perk and a ⭐ special weapon
+from its region, so where you start shapes your strategy. Tap **🌍 Perks** while
+choosing a country to compare them, and **⭐** during the game to use yours.
+
+| Perk | Regions | Bonus | ⭐ Special (cooldown) |
+| --- | --- | --- | --- |
+| ⚓ Naval power | British Isles, Low Countries; Oceania and the Pacific | Warships 25% cheaper, fleet +2 | **Dreadnought**: a super-battleship, 3× tougher with double range (2 min) |
+| 🧱 Engineers | Western and Central Europe | Forts and walls 25% cheaper, walls reach 25% further | **Railway gun**: a super-artillery gun with very long range that you can move (30 s) |
+| 💰 Trade | Iberia, Italy, Greece, the Balkans; most of Africa | +15% gold income | **Mercenaries**: 1,500 gold for troops worth 40% of your cap, above the cap for a minute (2.5 min) |
+| ❄️ Winter war | The Nordics | Invaders lose 50% more troops and advance 25% slower | **Viking raid**: three fast longships with 40% of your troops; coastal batteries can't hit them, they storm inland twice as fast and plunder gold (2 min) |
+| 🪖 Manpower | Russia and Eastern Europe; Central, East and South Asia | Troops grow 15% faster | **Conscription**: +50% troops at once, above the cap for 45 s (3 min) |
+| ✈️ Air power | Turkey, the Middle East, North Africa; North America | Airfields and carriers reload 25% faster | **Drone swarm**: twelve drone strikes SAMs can't stop (1.5 min). North America gets the **Stealth bomber** instead: a heavy air strike SAMs can't see (1.5 min) |
+| 🌿 Jungle | Central and South America, the Caribbean | Invaders advance 25% slower, and your troops lose half as many when land falls | **Ambush**: for 20 s, enemy attacks into a marked area lose half their troops (2 min) |
+
+On the Random map each nation gets a random perk. AIs use their specials too.
+
 **🎓 Tutorial:** new players can tap **Tutorial** on the main menu for a
 gentle game on the Europe map against three easy rivals, one step at a time:
 choose a country, expand, build a gold mine and a city, upgrade, build a
@@ -123,7 +139,12 @@ artillery hit.
   - **💣 Air strike (300g):** a bomber carpet-bombs the area with 6 bombs,
     killing troops, wrecking buildings and knocking out land. Aim at an enemy
     warship or troop boat and the bomber follows it and bombs it at sea:
-    each hit costs a warship one hit point, and troop boats sink.
+    each hit costs a warship one hit point, and troop boats sink. You can
+    also bomb open sea: anything sailing where the bombs fall is hit.
+  - **🔥 Napalm strike (450g):** the bomber sets 10 fires across enemy land.
+    Each burns for 8 seconds, knocking out the land under it, damaging
+    buildings and killing troops, and can spread to a neighbouring cell (up
+    to three times over). Land targets only.
   Dashed circles show each airfield's reach. Both share the base's reload.
   After the drop the plane banks round and flies home; if it makes it back
   without being shot down, its airfield or carrier is ready to fly again
@@ -143,6 +164,20 @@ artillery hit.
   - **🛩️ Aircraft carrier (1,500g):** a mobile airfield. ✈ Drop can launch
     from wherever it is (level 2 airfield range and reload). It has no guns
     and takes 10 hits to sink, so escort it.
+  - **🐋 Submarine (900g, level 2 shipyard):** hidden from enemies unless
+    it has fired in the last 10 seconds or sails within range of their
+    warships or coastal batteries, which are the only things that can hit
+    it (bombs and shells pass over it; a nuke sinks it). It takes 4 hits.
+    Tap it to move it or fire a missile at anything within 90 cells. Each
+    sub reloads on its own:
+
+    | Missile | Cost | Reload | What it does |
+    |---|---|---|---|
+    | 🚀 Cruise missile | 400 | 8 s | Flies low, so SAMs only see it at half range. Destroys the building it hits outright, with a small blast |
+    | 🎆 Cluster cruise missile | 650 | 12 s | Breaks up over the target into 8 bombs spread across a wide area |
+    | ⚡ EMP missile | 500 | 20 s | Knocks out enemy SAMs, artillery, railway guns, coastal batteries, airfields, silos and ships within 16 cells for 20 s |
+    | ☢ Sub nuke | 1,350 | 35 s | A level 2 nuke. Needs a level 2 silo at home |
+    | ☢ Cluster nuke | 1,800 | 45 s | Splits into 5 nuclear warheads spread round the target. Needs a level 2 silo at home |
 - **Moving ships:** tap one of your ships to select it (a ring appears),
   then tap the sea, or near a coast, to send it there. It finds its own
   route, and a dashed line shows where it's heading.
@@ -152,8 +187,22 @@ artillery hit.
 **Artillery** shells enemy land and buildings within range. Hits kill troops
 and blast land back to neutral.
 
-**Nukes** cost 900 gold. Tap **☢**, then tap an enemy target (you can't nuke
-your own land). Each silo reloads separately, so two silos let you
+**Nukes** cost 900 gold. Tap **☢ Launch**, choose a weapon, then tap an
+enemy target (you can't nuke your own land). The silo can launch:
+- **☢ Nuke (900g):** one big blast.
+- **☢ Cluster nuke (1,500g, level 2 silo):** the missile breaks up near the
+  target into 5 warheads, each a level 1 blast, spread round it: a much
+  wider area. Its hardened bus takes two SAM hits before it splits, and
+  after that SAMs must stop each warhead separately.
+- **⚡ EMP strike (500g):** no blast; it knocks out enemy defences, guns,
+  air bases, silos and ships within 16 cells for 20 seconds (blue sparks
+  show what's out). Fire one ahead of a nuke or an invasion.
+
+Missiles and air strikes can be aimed at the sea as well as land. Any
+blast sinks enemy troop boats within its radius and hits enemy warships
+(a nuke sinks every enemy vessel in range).
+
+ Each silo reloads separately, so two silos let you
 fire twice as often, three silos three times as often, and so on. A nuke
 fires from your best ready silo (highest level, then nearest the target),
 and its blast size and reload depend on that silo's level. The ☢ button
