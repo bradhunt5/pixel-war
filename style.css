@@ -179,6 +179,26 @@ input[type='range']::-moz-range-thumb {
 .act:active { background: rgba(255, 255, 255, 0.18); }
 .act.nuke { background: rgba(239, 68, 68, 0.25); border-color: rgba(239, 68, 68, 0.6); }
 .act:disabled { opacity: 0.4; }
+/* While you're aiming or placing something, the banner shows what to tap
+   with a clear red Cancel button underneath. */
+.banner[data-kind='mode'] { flex-direction: column; align-items: stretch; gap: 8px; text-align: center; }
+.banner[data-kind='mode'] #btn-banner {
+  align-self: center;
+  min-width: 140px;
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 10px;
+  background: rgba(220, 38, 38, 0.85);
+  border: 1px solid rgba(254, 202, 202, 0.7);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+.banner[data-kind='mode'] #btn-banner:active { background: rgba(185, 28, 28, 1); }
+/* On a phone the button spans the banner, so it's easy to hit. */
+@media (max-width: 520px) {
+  .banner[data-kind='mode'] #btn-banner { align-self: stretch; height: 40px; }
+}
 
 .sheet {
   position: fixed;
@@ -214,6 +234,8 @@ body:not([data-state='play']) .sheet { display: none; }
 }
 .build-list button:active { background: rgba(255, 255, 255, 0.15); }
 .build-list button:disabled { opacity: 0.45; }
+.build-list button.danger { background: rgba(220, 38, 38, 0.22); border-color: rgba(248, 113, 113, 0.6); }
+.build-list button.danger:active { background: rgba(220, 38, 38, 0.4); }
 .build-list .bi { font-size: 24px; width: 30px; text-align: center; }
 .build-list .bt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .build-list .bt small { color: var(--muted); font-size: 12px; }
@@ -245,9 +267,13 @@ body:not([data-state='play']) .sheet { display: none; }
   border: 1px solid var(--panel-edge);
   border-radius: 12px;
   z-index: 6;
-  white-space: nowrap;
+  /* Long prompts wrap, so Cancel always stays on screen. */
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 16px);
 }
-.banner p { margin: 0; font-size: 14px; }
+.banner p { margin: 0; font-size: 14px; flex: 1 1 auto; min-width: 0; line-height: 1.3; }
+.banner #btn-banner { flex: none; }
 body[data-state='spawn'] .banner[data-kind='spawn'],
 body[data-state='play'] .banner[data-kind='mode'] { display: flex; }
 
@@ -647,3 +673,232 @@ body.tutorial #board { display: none; }
   font-size: 13px;
 }
 .perk-row small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+
+/* ---------- In-game HUD (redesign) ---------- */
+
+/* The bottom bar's real height, kept up to date from game.js, so sheets and
+   the targeting banner always sit just above it. */
+:root { --dock-h: 132px; }
+.sheet { bottom: calc(var(--dock-h) + 8px); }
+.banner { bottom: calc(var(--dock-h) + 10px); }
+@media (max-width: 520px) { .sheet { bottom: calc(var(--dock-h) + 8px); } }
+
+/* Top bar: compact stat chips, settings on the right. */
+#hud-top { gap: 8px; padding: calc(env(safe-area-inset-top) + 6px) 10px 6px; overflow: visible; }
+.stats { display: flex; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.stat {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.stat .ic { font-size: 14px; line-height: 1; }
+.stat .v { font-size: 15px; }
+.stat .sub { font-size: 11px; }
+.hud-buttons { position: relative; align-items: center; }
+.hud-menu { display: flex; gap: 6px; }
+#btn-hud-menu { display: none; }
+.icon-btn { min-width: 36px; height: 36px; }
+
+/* Phones: sound, speed and pause tuck into a menu. */
+@media (max-width: 600px) {
+  #btn-hud-menu { display: block; }
+  .hud-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    flex-direction: column;
+    padding: 6px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    z-index: 8;
+  }
+  .hud-menu.open { display: flex; }
+  .stat { padding: 4px 8px; gap: 4px; }
+  .stat .v { font-size: 14px; }
+  .stats { gap: 4px; }
+}
+/* Very narrow phones: drop the clock's icon and tighten the chips. */
+@media (max-width: 400px) {
+  .stat { padding: 4px 6px; gap: 3px; }
+  .stat .ic { font-size: 12px; }
+  .stat:last-child .ic { display: none; }
+  .stat .sub { display: none; }
+}
+
+/* Leaderboard: a pill showing your rank, which opens the full list. */
+.board-pill {
+  position: fixed;
+  right: 8px;
+  top: calc(env(safe-area-inset-top) + 58px);
+  z-index: 4;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(7, 16, 29, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+}
+.board-pill .chev { color: var(--muted); transition: transform 0.15s; }
+body.board-open .board-pill .chev { transform: rotate(180deg); }
+#board { top: calc(env(safe-area-inset-top) + 92px); background: rgba(7, 16, 29, 0.78); border: 1px solid var(--panel-edge); }
+body:not(.board-open) #board { display: none; }
+
+/* Messages appear at the top, clear of the menus and buttons. */
+.toast { top: calc(env(safe-area-inset-top) + 60px); bottom: auto; transform: translate(-50%, -8px); }
+.toast.show { transform: translate(-50%, 0); }
+
+/* Send: quick percentage chips (plus a fine slider on wider screens). */
+.send-row { gap: 8px; }
+.send-k { font-weight: 700; font-size: 13px; color: var(--muted); }
+.pct-chips { display: flex; gap: 4px; }
+.pct-chips button {
+  min-width: 46px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  font-weight: 700;
+}
+.pct-chips button.on { background: var(--accent); border-color: var(--accent-hi); }
+#pct-label { min-width: 0; margin-left: auto; font-size: 13px; color: var(--muted); }
+#pct-label b { color: var(--text); }
+@media (max-width: 700px) { #pct { display: none; } }
+
+/* The dock: five fixed tabs, icon over label. Locked ones stay in place,
+   dimmed, so you can see what's still to come. */
+.dock { display: flex; gap: 6px; }
+.tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px 5px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.05);
+}
+.tab .ti { font-size: 20px; line-height: 1.1; }
+.tab .tl { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tab:active { background: rgba(255, 255, 255, 0.14); }
+.tab.locked { opacity: 0.4; }
+.tab.locked .tl::before { content: '🔒 '; font-size: 10px; }
+.tab.wait .tl { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tab.nuke:not(.locked) { border-color: rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.14); }
+.tab.special.ready { border-color: rgba(250, 204, 21, 0.75); background: rgba(250, 204, 21, 0.16); }
+.tab .badge {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+}
+/* Wide screens: the bottom bar's contents sit in a centred column. */
+#hud-bottom > * { width: 100%; max-width: 720px; margin: 0 auto; }
+.hint { text-align: center; font-size: 11px; }
+
+/* Tile menus (Build). */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.build-list .tile {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 4px;
+  text-align: center;
+  min-height: 78px;
+}
+.build-list .tile .bi { width: auto; font-size: 24px; }
+.build-list .tile .tn { font-size: 12px; font-weight: 700; }
+.build-list .tile .bc { font-size: 12px; }
+.build-list .tile.sel { border-color: var(--accent-hi); background: rgba(59, 130, 246, 0.22); }
+.build-list .tile.poor .bc { color: #f87171; }
+.tile-detail {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.tile-detail b { display: block; margin-bottom: 2px; font-size: 14px; }
+.build-list .tile-detail button { margin-top: 8px; width: 100%; justify-content: center; background: var(--accent); border-color: var(--accent-hi); font-weight: 800; }
+
+/* Someone has gone MAD: a red alert with a Retaliate button. */
+.mad-alert { border-color: rgba(248, 113, 113, 0.8); box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.35), 0 12px 40px rgba(0, 0, 0, 0.5); z-index: 9; }
+.mad-alert p small { display: block; margin-top: 4px; font-weight: 500; color: var(--muted); }
+.mad-alert #btn-mad-yes { background: #dc2626; border-color: rgba(254, 202, 202, 0.7); }
+
+/* Aiming on a touch screen: the prompt, then Cancel and Fire side by side. */
+.banner[data-kind='mode'] { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+.banner[data-kind='mode'] p { flex: 1 0 100%; }
+.banner .aim-tip { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
+.banner[data-kind='mode'] #btn-fire {
+  min-width: 120px;
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 10px;
+  background: #16a34a;
+  border: 1px solid rgba(187, 247, 208, 0.7);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+}
+.banner #btn-fire:active { background: #15803d; }
+@media (max-width: 520px) {
+  .banner[data-kind='mode'] #btn-banner,
+  .banner[data-kind='mode'] #btn-fire { flex: 1 1 0; }
+}
+
+/* MAD: what to hit first, a compact segmented row on the banner. */
+.focus-seg {
+  display: flex;
+  gap: 2px;
+  margin: 8px auto 0;
+  padding: 2px;
+  width: max-content;
+  max-width: 100%;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-edge);
+  overflow-x: auto;
+}
+.focus-seg button {
+  flex: 1 0 auto;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.focus-seg button.on { background: rgba(220, 38, 38, 0.85); color: #fff; }
+@media (max-width: 420px) { .focus-seg button { padding: 5px 6px; font-size: 11px; } }
+.mad-alert .mad-clock { display: block; margin-top: 4px; font-size: 13px; font-weight: 700; color: #fca5a5; }
+.mad-alert .mad-clock b { font-size: 16px; color: #fff; }
+
+/* Spy odds on the aiming banner. */
+.odds { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.odds.good { background: rgba(22, 163, 74, 0.3); color: #bbf7d0; }
+.odds.fair { background: rgba(234, 179, 8, 0.25); color: #fde68a; }
+.odds.poor { background: rgba(220, 38, 38, 0.3); color: #fecaca; }

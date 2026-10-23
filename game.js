@@ -12,7 +12,7 @@
 (() => {
   // Players must run the same version to share a game (keep in step with
   // package.json).
-  const APP_VERSION = '1.11.0';
+  const APP_VERSION = '1.12.0';
   const WATER = -2;
   const NEUTRAL = -1;
   const TICK = 0.1;               // seconds of game time per simulation step
@@ -72,6 +72,10 @@
   const NUKE_RADIUS = [7, 10, 13];
   const NUKE_TIME = 3;
   const NUKE_COOLDOWN = [30, 20, 12]; // seconds between launches per faction
+  // Troop losses from nukes hitting the same nation within NUKE_STACK_TIME
+  // seconds: the first in full, then less each time.
+  const NUKE_STACK = [1, 0.6, 0.35, 0.2];
+  const NUKE_STACK_TIME = 4;
   // Tsar Bomba: the super-nuke, launched from a level 3 silo.
   const TSAR_COST = 4000;
   const TSAR_RADIUS = 28;
@@ -90,6 +94,28 @@
   const STRIKE_COST = 300;
   const STRIKE_BOMBS = 6;
   const STRIKE_SPREAD = 4;        // cells around the target the bombs fall in
+  // Spies, trained at a barracks: they slip behind enemy lines to a target
+  // building. Sabotage knocks any building out for a while; a meltdown makes
+  // an enemy silo blow up in place with the biggest bomb it could make.
+  const SPY_OPS = {
+    sabotage: { icon: '🕵️', label: 'Sabotage', cost: 500, cooldown: 30, chance: 0.85, barracks: 1,
+      text: 'Knocks out any enemy building for 45s: SAMs, guns, silos and air bases stop working; cities and mines stop paying' },
+    meltdown: { icon: '☢', label: 'Silo meltdown', cost: 1800, cooldown: 150, chance: 0.6, barracks: 2,
+      text: 'Overloads an enemy silo so it explodes with the biggest bomb it could launch: a Tsar Bomba from a level 3 silo' },
+  };
+  const SABOTAGE_TIME = 45;
+  // Spies go in by helicopter, flying low under SAM radar (only forts and
+  // barracks stop them), then hover while the team fast-ropes down.
+  const SPY_SPEED = 14;           // cells per second for the helicopter
+  const SPY_INSERT = 2;           // seconds hovering and on the job before the result
+  const MELTDOWN_WARN = 1.5;      // seconds a sabotaged silo glows before it blows
+  // Defences against spies: each enemy fort covering the target cuts the
+  // chance a lot (more at higher levels), forts just beyond cover a little,
+  // and the enemy's best barracks a little per level.
+  const SPY_FORT_GUARD = [0.25, 0.35, 0.45];
+  const SPY_FORT_NEAR = 0.1;      // a fort within 1.5x its cover, but not covering
+  const SPY_COUNTER = 0.07;       // per level of the enemy's best barracks
+  const SPY_MIN_CHANCE = 0.1;
   // Napalm strikes: fires that burn land for a while and spread a little.
   const NAPALM_COST = 450;
   const NAPALM_FIRES = 10;        // fires started by one strike
@@ -201,8 +227,8 @@
   const SUB_RANGE = 90;
   const SUB_REVEAL = 10;          // seconds a sub shows up after firing
   const SUB_WEAPONS = {
-    cruise: { icon: '🚀', label: 'Cruise missile', cost: 400, reload: 8, text: 'Flies low under most SAM cover and destroys the building it hits' },
-    ccruise: { icon: '🎆', label: 'Cluster cruise missile', cost: 650, reload: 12, text: 'Breaks up over the target into 8 bombs across a wide area' },
+    cruise: { icon: '🚀', label: 'Cruise missile', cost: 400, reload: 8, text: 'Flies under SAM radar and destroys the building it hits' },
+    ccruise: { icon: '🎆', label: 'Cluster cruise missile', cost: 650, reload: 12, text: 'Flies under SAM radar, then breaks up over the target into 8 bombs across a wide area' },
     nuke: { icon: '☢', label: 'Sub nuke', cost: 1350, reload: 35, silo: 2, text: 'A level 2 nuke from the sea. Needs a level 2 silo at home' },
     cnuke: { icon: '☢', label: 'Cluster nuke', cost: 1800, reload: 45, silo: 2, text: 'Splits into 5 nuclear warheads spread round the target; SAMs must stop each one' },
     emp: { icon: '⚡', label: 'EMP missile', cost: 500, reload: 20, text: 'Knocks out enemy SAMs, guns, airfields, silos and ships for 20s' },
@@ -213,10 +239,23 @@
   const CLUSTER_BOMBS = 8;
   const CLUSTER_SPREAD = 7;
   const CLUSTER_WARHEADS = 5;
+  const SALVO_MAX = 4;            // nukes in a salvo (MAD fires every silo)
+  // How far a cluster nuke's blasts reach, in warhead radii: under the 1.8 of
+  // the smallest salvo, so a cluster is always the tighter of the two.
+  const CLUSTER_REACH = 1.7;
   const CLUSTER_NUKE_COST = 1500; // from a level 2+ silo
   const EMP_COST = 500;           // from any silo
   const EMP_RADIUS = 16;
   const EMP_TIME = 20;
+  // Ship upgrades (not submarines): a SAM launcher (two levels) that shoots
+  // down missiles and planes like a SAM site, and depth charges that find
+  // and hit enemy submarines close by. Each fitting adds armour.
+  const SHIP_SAM_COST = [600, 1000];
+  const SHIP_SAM_HP = 2;          // extra hull per SAM level
+  const SHIP_DC_COST = 450;
+  const SHIP_DC_HP = 1;
+  const DC_RANGE = 10;            // cells: sonar and depth charge reach
+  const DC_RELOAD = 3;
   const SHIPS_PER_YARD_LEVEL = 2;
   const MAX_SHIPS = 8;
   // Supply drops appear on unclaimed land.
@@ -336,7 +375,8 @@
     },
     barracks: {
       label: 'Barracks', icon: '⚔️', cost: 300, step: 1.5, hp: 3,
-      stats: (l) => `Your attacks cost ${Math.round(BARRACKS_DISCOUNT[l - 1] * 100)}% fewer troops`,
+      stats: (l) => `Your attacks cost ${Math.round(BARRACKS_DISCOUNT[l - 1] * 100)}% fewer troops. Trains spies`
+        + `${l >= 2 ? ' (sabotage and silo meltdowns)' : ' (sabotage; silo meltdowns from level 2)'}, and makes enemy spies easier to catch`,
     },
   };
   // Upgrading to level 2 costs 1.2× the base price, to level 3 2.4×.
@@ -1068,6 +1108,8 @@
       walls: [],
       ambushes: [],
       fires: [],
+      agents: [],
+      meltdowns: [],
       ally: new Uint8Array(SLOT * SLOT),
       truce: new Float32Array(SLOT * SLOT),
       rel: new Float32Array(SLOT * SLOT),
@@ -1488,6 +1530,7 @@
       f.silosReady = 0;
       f.nextNuke = Infinity;
       f.attackDiscount = 0;
+      f.barracksLevel = 0;
       f.airReady = 0;
       f.nextAir = Infinity;
       f.shipCap = 0;
@@ -1497,12 +1540,16 @@
     for (const b of G.buildings.values()) {
       const f = G.factions[b.owner];
       const l = b.level - 1;
+      // A sabotaged city keeps its troop cap but pays nothing for a while.
+      const out = (b.empUntil || 0) > G.time;
       if (b.type === 'city') {
         f.capBonus += sc2(CITY_CAP[l]);
-        f.troopBonus += sc2(CITY_TROOPS[l]);
-        f.goldBonus += CITY_GOLD[l];
+        if (!out) {
+          f.troopBonus += sc2(CITY_TROOPS[l]);
+          f.goldBonus += CITY_GOLD[l];
+        }
       } else if (b.type === 'mine') {
-        f.goldBonus += MINE_GOLD[l];
+        if (!out) f.goldBonus += MINE_GOLD[l];
       } else if (b.type === 'silo') {
         f.siloLevel = Math.max(f.siloLevel, b.level);
         const readyAt = b.readyAt || 0;
@@ -1512,6 +1559,7 @@
         f.shipCap = Math.min(MAX_SHIPS + (hasPerk(f, 'naval') ? 2 : 0), f.shipCap + b.level * SHIPS_PER_YARD_LEVEL + (hasPerk(f, 'naval') && !f.shipCap ? 2 : 0));
       } else if (b.type === 'barracks') {
         f.attackDiscount = Math.max(f.attackDiscount, BARRACKS_DISCOUNT[l]);
+        f.barracksLevel = Math.max(f.barracksLevel, b.level);
       } else if (b.type === 'airfield') {
         const readyAt = b.readyAt || 0;
         if (readyAt <= G.time) f.airReady++;
@@ -1918,6 +1966,41 @@
       if (window.PixelMusic) window.PixelMusic.duck(NUKE_TIME, 0.15);
       const what = ev.cluster ? 'cluster nuke' : 'nuke';
       toast(ev.f === myId ? `☢ ${ev.cluster ? 'Cluster nuke' : 'Nuke'} launched!` : `☢ ${name(ev.f)} has launched a ${what}!`);
+    } else if (ev.k === 'spy') {
+      const what = BUILDINGS[ev.type] ? BUILDINGS[ev.type].label.toLowerCase() : 'building';
+      if (ev.cell >= 0 && (ev.f === myId || ev.to === myId) && (ev.res === 'caught' || (ev.res === 'ok' && ev.op === 'sabotage'))) {
+        spyFx.push({ cell: ev.cell, at: performance.now(), kind: ev.res === 'caught' ? 'search' : 'spark', seed: Math.random() * 6 });
+      }
+      if (ev.res === 'gone') {
+        if (ev.f === myId) toast('🕵️ Your agents found their target gone and came home');
+      } else if (ev.res === 'caught') {
+        if (ev.f === myId) toast(`🕵️ Your agents were caught by ${name(ev.to)}!`);
+        else if (ev.to === myId) toast(`🕵️ You caught ${name(ev.f)}'s spies at your ${what}`);
+      } else if (ev.op === 'meltdown') {
+        sfx('siren');
+        if (ev.f === myId) toast(`☢ Meltdown! ${name(ev.to)}'s silo blew up${ev.tsar ? ' with a Tsar Bomba' : ''}`);
+        else if (ev.to === myId) toast(`☢ ${name(ev.f)}'s spies made your silo melt down${ev.tsar ? ' with a Tsar Bomba' : ''}!`);
+        else toast(`☢ ${name(ev.to)}'s silo melted down: ${name(ev.f)}'s spies at work`);
+      } else if (ev.f === myId) {
+        toast(`🕵️ Sabotage! ${name(ev.to)}'s ${what} is out for ${SABOTAGE_TIME}s`);
+      } else if (ev.to === myId) {
+        toast(`🕵️ ${name(ev.f)}'s spies sabotaged your ${what}!`);
+      }
+    } else if (ev.k === 'mad') {
+      sfx('siren');
+      setTimeout(() => sfx('siren'), 900);
+      setTimeout(() => sfx('siren'), 1800);
+      if (window.PixelMusic) window.PixelMusic.duck(NUKE_TIME + 1, 0.1);
+      const nukes = `${ev.n} nuke${ev.n === 1 ? '' : 's'}`;
+      if (ev.salvo) {
+        toast(ev.f === myId ? `☢ Salvo: ${nukes} launched!` : `☢ ${name(ev.f)} has launched a salvo of ${nukes}!`);
+        return;
+      }
+      // The victim of a MAD launch gets the alert with Retaliate.
+      if (ev.to === myId && !ev.back && showMadAlert(ev.f, ev.n, ev.dur || MAD_TIME)) return;
+      if (ev.f === myId) toast(ev.back ? `☢ You retaliated: ${nukes} heading for ${name(ev.to)}!` : `☢☢☢ MAD: ${nukes} heading for ${name(ev.to)}!`);
+      else if (ev.to === myId) toast(`☢☢☢ ${name(ev.f)} ${ev.back ? 'retaliated' : 'has gone MAD on you'}: ${nukes} incoming!`);
+      else toast(ev.back ? `☢ ${name(ev.f)} retaliated against ${name(ev.to)} with ${nukes}` : `☢☢☢ ${name(ev.f)} has gone MAD on ${name(ev.to)}: ${nukes}!`);
     } else if (ev.k === 'missile') {
       const w = SUB_WEAPONS[ev.kind];
       if (!w) return;
@@ -2533,7 +2616,8 @@
   }
 
   // kind: 'nuke', 'cnuke' (cluster nuke, level 2+ silo) or 'emp'.
-  function launchNuke(f, target, kind = 'nuke') {
+  // `dur` (optional): seconds of flight, longer for MAD's long-range strike.
+  function launchNuke(f, target, kind = 'nuke', dur) {
     if (!f.built.silo) return 'Build a nuclear silo first';
     if (kind === 'cnuke' && f.siloLevel < 2) return 'Cluster nukes need a level 2 silo';
     const cost = kind === 'cnuke' ? CLUSTER_NUKE_COST : kind === 'emp' ? EMP_COST : NUKE_COST;
@@ -2558,7 +2642,169 @@
     silo.readyAt = G.time + NUKE_COOLDOWN[silo.level - 1] * (kind === 'cnuke' ? 1.5 : 1);
     G.bver++;
     // A cluster nuke's warheads are each a level 1 blast.
-    launchMissile(f, silo.cell, target, kind, Math.round(sc(NUKE_RADIUS[kind === 'cnuke' ? 0 : silo.level - 1])));
+    launchMissile(f, silo.cell, target, kind, Math.round(sc(NUKE_RADIUS[kind === 'cnuke' ? 0 : silo.level - 1])), dur);
+    return null;
+  }
+
+  // Mutually assured destruction: every ready silo you can pay for fires at
+  // one nation at once. The nukes go first at its most valuable targets
+  // (silos, SAMs, cities, airfields, its capital), then spread over the rest
+  // of its land, never where a blast would touch your own or an ally's land.
+  // The victim is warned and can answer in kind.
+  const MAD_RETALIATE = 0.8;      // chance an AI victim with ready silos fires back
+  const MAD_ALERT_TIME = 12;      // seconds the victim's Retaliate alert stays up
+  // MAD nukes are a long-range strike: a slower flight than a single nuke
+  // gives the victim time to see the alert and retaliate before impact.
+  const MAD_TIME = 8;
+  const MAD_VALUE = { silo: 6, sam: 5, city: 5, airfield: 4, railgun: 4, artillery: 3, shipyard: 3, coastal: 2, barracks: 2, mine: 1, fort: 1 };
+
+  // What a MAD launch goes for first. Anything left over still spreads over
+  // the rest of the nation's land. Retaliation always uses `all`.
+  const MAD_FOCUS = {
+    all: { icon: '⚖️', label: 'All' },
+    silos: { icon: '☢', label: 'Silos', types: ['silo'] },
+    defence: { icon: '📡', label: 'Defences', types: ['sam', 'coastal', 'artillery', 'railgun', 'fort'] },
+    cities: { icon: '🏙️', label: 'Cities', types: ['city', 'mine'], capital: true },
+    military: { icon: '✈️', label: 'Military', types: ['airfield', 'shipyard', 'barracks'] },
+  };
+
+  // How many nukes a MAD launch would fire now.
+  const madSize = (f) => Math.min(readySilos(f), Math.floor(f.gold / NUKE_COST));
+
+  // Where n MAD nukes from f would land on nation `victim` (also used for
+  // the preview, so it shows exactly what fires).
+  function madPlan(f, victim, n, focus = 'all') {
+    const e = G.factions[victim];
+    if (n <= 0 || !e || !e.alive || victim === f.id || allied(victim, f.id)) return [];
+    const R = salvoRadius(f);
+    const picked = [];
+    const take = (c, gap) => {
+      if (picked.length >= n || picked.some((q) => cellDist(q, c) < gap) || !blastSafe(f, c, R)) return;
+      picked.push(c);
+    };
+    const fx = MAD_FOCUS[focus] || MAD_FOCUS.all;
+    const boost = (type) => (fx.types && fx.types.includes(type) ? 100 : 0);
+    const options = [];
+    for (const b of G.buildings.values()) if (b.owner === victim) options.push({ cell: b.cell, score: (MAD_VALUE[b.type] || 1) * b.level + boost(b.type) });
+    if (e.capital >= 0 && G.owner[e.capital] === victim) options.push({ cell: e.capital, score: 5 + (fx.capital ? 100 : 0) });
+    options.sort((a, b) => b.score - a.score || a.cell - b.cell);
+    for (const o of options) take(o.cell, R * 1.5);
+    // Then the rest of its land, spread out, closer together if it's small.
+    const step = Math.max(2, Math.round(R * 0.75));
+    for (const gap of [R * 1.5, R * 0.75]) {
+      for (let y = 0; y < G.gh && picked.length < n; y += step) {
+        for (let x = 0; x < G.gw && picked.length < n; x += step) {
+          const c = y * G.gw + x;
+          if (G.owner[c] === victim) take(c, gap);
+        }
+      }
+    }
+    // A tiny nation gets the leftover nukes on the same spots again.
+    for (let k = 0; picked.length && picked.length < n; k++) picked.push(picked[k]);
+    return picked;
+  }
+
+  // Whether a blast of radius R at cell c leaves your and your allies' land alone.
+  function blastSafe(f, c, R) {
+    const x0 = cx(c);
+    const y0 = cy(c);
+    for (let dy = -R - 1; dy <= R + 1; dy += 2) {
+      for (let dx = -R - 1; dx <= R + 1; dx += 2) {
+        const x = wx(x0 + dx);
+        const y = y0 + dy;
+        if (x >= 0 && y >= 0 && x < G.gw && y < G.gh && allied(G.owner[y * G.gw + x], f.id)) return false;
+      }
+    }
+    return true;
+  }
+
+  function fireMad(f, victim, retaliation, focus = 'all') {
+    if (!f.built.silo) return 'Build a nuclear silo first';
+    const e = G.factions[victim];
+    if (!e || !e.alive || victim === f.id) return 'Tap the nation you want to target';
+    if (isAlly(f.id, victim)) return `${e.name} is your ally`;
+    if (inTruce(f.id, victim)) return `Ceasefire with ${e.name}: war resumes in ${Math.ceil(G.truce[pair(f.id, victim)] - G.time)}s`;
+    const ready = readySilos(f);
+    const n = madSize(f);
+    if (!ready) return 'No silos are ready';
+    if (!n) return `Each nuke costs ${NUKE_COST} gold`;
+    const targets = madPlan(f, victim, n, retaliation ? 'all' : focus);
+    if (!targets.length) return `Nowhere in ${e.name} is clear of your and your allies' land`;
+    let fired = 0;
+    // One announcement for the whole launch rather than one per nuke.
+    const was = G.muteNukes;
+    G.muteNukes = true;
+    for (const t of targets) if (!launchNuke(f, t, 'nuke', MAD_TIME)) fired++;
+    G.muteNukes = was;
+    if (!fired) return 'No silos could fire';
+    stat(f.id, 'nukes', fired);
+    hostile(f.id, victim, 80);
+    announce({ k: 'mad', f: f.id, to: victim, n: fired, back: !!retaliation, dur: MAD_TIME });
+    // An AI victim with silos left usually fires straight back (a
+    // retaliation isn't answered again, so it can't go on for ever).
+    if (!retaliation && !e.isPlayer && readySilos(e) && Math.random() < MAD_RETALIATE) {
+      if (!G.madQueue) G.madQueue = [];
+      G.madQueue.push({ fid: victim, at: G.time + 1 + Math.random() * 1.5, focus: f.id });
+    }
+    return null;
+  }
+
+  function advanceMadQueue() {
+    if (!G.madQueue || !G.madQueue.length) return;
+    G.madQueue = G.madQueue.filter((q) => {
+      if (G.time < q.at) return true;
+      const e = G.factions[q.fid];
+      if (e.alive && !allied(e.id, q.focus)) fireMad(e, q.focus, true);
+      return false;
+    });
+  }
+
+  // A salvo: n nukes landing spread round one target, each about one blast
+  // width from its neighbours so the blasts just overlap at the edges.
+  // Returns the landing cells (the preview uses the same pattern).
+  function salvoPattern(target, n, R) {
+    const d = R * 1.6;
+    const pts = [];
+    const ring = n >= 5 ? n - 1 : n;
+    if (n >= 5) pts.push([0, 0]);
+    const rc = ring === 1 ? 0 : d / (2 * Math.sin(Math.PI / ring));
+    for (let k = 0; k < ring; k++) {
+      const a = -Math.PI / 2 + (k / ring) * Math.PI * 2 + (ring === 2 ? Math.PI / 2 : 0);
+      pts.push([Math.cos(a) * rc, Math.sin(a) * rc]);
+    }
+    return pts.map(([dx, dy]) => {
+      const x = wx(Math.round(cx(target) + dx));
+      const y = clamp(Math.round(cy(target) + dy), 0, G.gh - 1);
+      return y * G.gw + x;
+    });
+  }
+
+  function readySilos(f) {
+    let n = 0;
+    for (const b of G.buildings.values()) if (b.type === 'silo' && b.owner === f.id && (b.readyAt || 0) <= G.time) n++;
+    return n;
+  }
+
+  // The radius of the nukes a salvo (or a single nuke) would fire now.
+  const salvoRadius = (f) => Math.round(sc(NUKE_RADIUS[clamp((f.siloLevel || 1) - 1, 0, 2)]));
+  // How many nukes a salvo would fire now: up to SALVO_MAX ready silos you
+  // can pay for (MAD is the way to fire everything).
+  const salvoSize = (f) => Math.min(SALVO_MAX, readySilos(f), Math.floor(f.gold / NUKE_COST));
+
+  function fireSalvo(f, target) {
+    if (!f.built.silo) return 'Build a nuclear silo first';
+    if (target < 0) return 'Tap a target on the map';
+    const ready = readySilos(f);
+    const n = salvoSize(f);
+    if (n < 2) return ready < 2 ? 'A salvo needs at least 2 ready silos' : `A salvo of 2 costs ${fmt(NUKE_COST * 2)} gold`;
+    let fired = 0;
+    const was = G.muteNukes;
+    G.muteNukes = true;
+    for (const cell of salvoPattern(target, n, salvoRadius(f))) if (!launchNuke(f, cell)) fired++;
+    G.muteNukes = was;
+    if (!fired) return 'No silos could fire';
+    stat(f.id, 'nukes', fired);
+    announce({ k: 'mad', f: f.id, n: fired, salvo: true });
     return null;
   }
 
@@ -2606,9 +2852,20 @@
   }
 
   function samDefence() {
-    if (!G.missiles.length || !G.factions.some((f) => f.built.sam)) return;
-    for (const m of G.missiles) if (!m.done && !m.bomb) samEngage(m, 'missile', (k) => missilePoint(m, k));
+    if (!G.missiles.length || (!G.factions.some((f) => f.built.sam) && !G.ships.some((sh) => sh.sam))) return;
+    // Cruise missiles (and their bomblets) fly under SAM radar.
+    for (const m of G.missiles) if (!m.done && !m.bomb && !m.cruise) samEngage(m, 'missile', (k) => missilePoint(m, k), (k) => groundPoint(m, k));
   }
+
+  // The point on the ground under a missile (its shadow): where radar sees
+  // it, whichever way it is flying. The parts of a cluster are already low.
+  function groundPoint(m, k) {
+    return m.px === undefined ? flightPoint(m, k, 0) : missilePoint(m, k);
+  }
+
+  // A SAM shoots at a missile whose shadow passes within its range, and at
+  // any missile about to land within its range (in time to meet it).
+  const SAM_TERMINAL = 1.2;       // seconds before impact
 
   // A missile's drawn position (in cells) at fraction k of its flight.
   // Nukes arc high, cruise missiles skim low, and the parts of a cluster
@@ -2620,16 +2877,18 @@
     return { x: m.px + dx * k, y: m.py + (cy(m.to) + 0.5 - m.py) * k };
   }
 
-  // `pos(k)` gives the target's drawn position at fraction k of its flight.
-  function samEngage(target, kind, pos) {
+  // `pos(k)` gives the target's drawn position at fraction k of its flight,
+  // and `ground(k)` (missiles only) the point on the ground beneath it.
+  function samEngage(target, kind, pos, ground) {
     const left = target.dur - target.t;
     if (left <= TICK) return;
-    const at = pointCell(pos(target.t / target.dur));
+    const at = pointCell((ground || pos)(target.t / target.dur));
+    const landing = ground && left <= SAM_TERMINAL ? target.to : -1;
     for (const b of G.buildings.values()) {
       if ((target.hp || 1) - (target.inbound || 0) <= 0) return;
       if (b.type !== 'sam' || allied(b.owner, target.owner) || (b.readyAt || 0) > G.time) continue;
-      // Low-flying cruise missiles are only seen close in.
-      if (cellDist(b.cell, at) > sc(SAM_RANGE[b.level - 1]) * (target.cruise ? 0.5 : 1)) continue;
+      const range = sc(SAM_RANGE[b.level - 1]);
+      if (cellDist(b.cell, at) > range && !(landing >= 0 && cellDist(b.cell, landing) <= range)) continue;
       b.readyAt = G.time + SAM_RELOAD[b.level - 1];
       G.bver++;
       target.inbound = (target.inbound || 0) + 1;
@@ -2639,6 +2898,47 @@
         owner: b.owner, from: b.cell, hx: hit.x, hy: hit.y, t: 0, dur, target, kind,
       });
     }
+    // Warships fitted with a SAM launcher fire like a SAM site of that level.
+    for (const sh of G.ships) {
+      if ((target.hp || 1) - (target.inbound || 0) <= 0) return;
+      if (!sh.sam || sh.dead || allied(sh.owner, target.owner) || (sh.samReadyAt || 0) > G.time || (sh.empUntil || 0) > G.time) continue;
+      const range = sc(SAM_RANGE[sh.sam - 1]);
+      if (cellDist(sh.cell, at) > range && !(landing >= 0 && cellDist(sh.cell, landing) <= range)) continue;
+      sh.samReadyAt = G.time + SAM_RELOAD[sh.sam - 1];
+      target.inbound = (target.inbound || 0) + 1;
+      const { dur, hit } = interceptCourse(sh.cell, target, pos);
+      addFx(sh.cell, 1.5, '210,240,255', 350);
+      G.interceptors.push({
+        owner: sh.owner, from: sh.cell, hx: hit.x, hy: hit.y, t: 0, dur, target, kind,
+      });
+    }
+  }
+
+  const shipMaxHp = (sh) => SHIPS[sh.type].hp + (sh.sam || 0) * SHIP_SAM_HP + (sh.dc ? SHIP_DC_HP : 0);
+
+  // Fit a SAM launcher (or upgrade it) or depth charges to one of your ships.
+  function upgradeShip(f, id, kind) {
+    const sh = G.ships.find((x) => x.id === id && x.owner === f.id && !x.dead);
+    if (!sh) return 'That ship is gone';
+    if (SHIPS[sh.type].sub) return 'Submarines can\'t take that';
+    if (kind === 'sam') {
+      if ((sh.sam || 0) >= SHIP_SAM_COST.length) return 'Its SAM launcher is fully upgraded';
+      const cost = SHIP_SAM_COST[sh.sam || 0];
+      if (f.gold < cost) return `That costs ${fmt(cost)} gold`;
+      f.gold -= cost;
+      sh.sam = (sh.sam || 0) + 1;
+      sh.hp += SHIP_SAM_HP;
+    } else if (kind === 'dc') {
+      if (sh.dc) return 'It already has depth charges';
+      if (f.gold < SHIP_DC_COST) return `Depth charges cost ${fmt(SHIP_DC_COST)} gold`;
+      f.gold -= SHIP_DC_COST;
+      sh.dc = 1;
+      sh.hp += SHIP_DC_HP;
+    } else {
+      return 'Unknown upgrade';
+    }
+    addFx(sh.cell, 2, '210,240,255', 400);
+    return null;
   }
 
   // The earliest point where an interceptor fired from `cell` can meet the
@@ -2989,7 +3289,7 @@
   function subVisible(sh, viewer) {
     if (!SHIPS[sh.type].sub || allied(sh.owner, viewer) || (sh.revealUntil || 0) > G.time) return true;
     for (const o of G.ships) {
-      if (o.owner === viewer && !o.dead && SHIPS[o.type].range && cellDist(o.cell, sh.cell) <= sc(SHIPS[o.type].range)) return true;
+      if (o.owner === viewer && !o.dead && o.dc && cellDist(o.cell, sh.cell) <= sc(DC_RANGE)) return true;
     }
     for (const b of G.buildings.values()) {
       if (b.type === 'coastal' && b.owner === viewer && cellDist(b.cell, sh.cell) <= sc(COAST_RANGE[b.level - 1])) return true;
@@ -3020,12 +3320,12 @@
 
   // Put a missile in the air. kind: nuke, cnuke, cruise, ccruise or emp.
   // Silo nukes come through launchNuke, which picks the radius.
-  function launchMissile(f, from, target, kind, radius) {
+  function launchMissile(f, from, target, kind, radius, dur) {
     // A cluster nuke's warheads are each a level 1 blast.
     const nukeR = radius || Math.round(sc(NUKE_RADIUS[kind === 'cnuke' ? 0 : 1]));
     const cruise = kind === 'cruise' || kind === 'ccruise';
     const dist = cellDist(from, target);
-    const m = { owner: f.id, from, to: target, t: 0, dur: NUKE_TIME, radius: nukeR };
+    const m = { owner: f.id, from, to: target, t: 0, dur: dur || NUKE_TIME, radius: nukeR };
     if (cruise) {
       m.cruise = true;
       m.dur = clamp(dist / sc(CRUISE_SPEED), 1.2, 4);
@@ -3039,7 +3339,7 @@
       m.cluster = true;
       m.child = nukeR;                 // each warhead's blast radius, before it splits
       m.hp = 2;                        // a hardened bus: two SAM hits to stop before it splits
-      m.radius = Math.round(nukeR * 1.6);
+      m.radius = Math.round(nukeR * CLUSTER_REACH);
     }
     if (kind === 'emp') {
       m.emp = true;
@@ -3051,7 +3351,7 @@
     hostile(f.id, victim, kind === 'emp' || cruise ? 20 : 40);
     if (kind === 'nuke' || kind === 'cnuke') {
       splashAllies(f.id, target, 'nuke');
-      announce({ k: 'nuke', f: f.id, cluster: kind === 'cnuke' });
+      if (!G.muteNukes) announce({ k: 'nuke', f: f.id, cluster: kind === 'cnuke' });
     } else {
       announce({ k: 'missile', f: f.id, to: victim, kind });
     }
@@ -3063,7 +3363,9 @@
     const p = missilePoint(m, m.t / m.dur);
     const nuke = !m.cruise;
     const n = nuke ? CLUSTER_WARHEADS : CLUSTER_BOMBS;
-    const spread = nuke ? m.child * 1.3 : sc(CLUSTER_SPREAD);
+    // A cluster nuke's outer warheads sit inside the blast of the centre one's
+    // edge, so the whole spread stays tighter than any salvo.
+    const spread = nuke ? m.child * (CLUSTER_REACH - 1) : sc(CLUSTER_SPREAD);
     const x0 = cx(m.to);
     const y0 = cy(m.to);
     for (let k = 0; k < n; k++) {
@@ -3102,6 +3404,116 @@
     addFx(m.to, R * 0.5, '230,245,255', 600);
   }
 
+  // ---------- Spies ----------
+
+  // The enemy building nearest a tapped cell (within a few cells), so a
+  // building's icon counts as a hit. `type` limits it to one kind.
+  function enemyBuildingNear(f, cell, type) {
+    let best = null;
+    let bestD = sc(3) + 1;
+    for (const b of G.buildings.values()) {
+      if (b.owner === f.id || allied(b.owner, f.id) || (type && b.type !== type)) continue;
+      const d = cellDist(b.cell, cell);
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  // The chance a spy operation on building b succeeds: enemy forts covering
+  // it and the enemy's best barracks (counter-intelligence) cut it.
+  function spyChance(op, b) {
+    let chance = SPY_OPS[op].chance;
+    let counter = 0;
+    for (const x of G.buildings.values()) {
+      if (x.owner !== b.owner) continue;
+      if (x.type === 'fort') {
+        const d = cellDist(x.cell, b.cell);
+        const cover = sc(FORT_RADIUS[x.level - 1]);
+        if (d <= cover) chance -= SPY_FORT_GUARD[x.level - 1];
+        else if (d <= cover * 1.5) chance -= SPY_FORT_NEAR;
+      }
+      if (x.type === 'barracks') counter = Math.max(counter, x.level);
+    }
+    return clamp(chance - counter * SPY_COUNTER, SPY_MIN_CHANCE, 0.95);
+  }
+
+  function launchSpy(f, op, cell) {
+    const spec = SPY_OPS[op];
+    if (!spec) return 'Unknown operation';
+    if (!f.built.barracks) return 'Build a barracks to train spies';
+    if ((f.barracksLevel || 0) < spec.barracks) return `${spec.label} needs a level ${spec.barracks} barracks`;
+    if (G.time < (f.nextSpy || 0)) return `Spies regrouping: ${Math.ceil(f.nextSpy - G.time)}s`;
+    if (f.gold < spec.cost) return `${spec.label} costs ${fmt(spec.cost)} gold`;
+    const b = cell >= 0 ? enemyBuildingNear(f, cell, op === 'meltdown' ? 'silo' : null) : null;
+    if (!b) return op === 'meltdown' ? 'Tap an enemy nuclear silo' : 'Tap an enemy building';
+    // They set off from your land nearest the target.
+    let from = f.capital;
+    for (const x of G.buildings.values()) if (x.owner === f.id && cellDist(x.cell, b.cell) < cellDist(from, b.cell)) from = x.cell;
+    f.gold -= spec.cost;
+    f.nextSpy = G.time + spec.cooldown;
+    G.agents.push({ owner: f.id, op, from, to: b.cell, bid: b.id, t: 0, dur: clamp(cellDist(from, b.cell) / sc(SPY_SPEED), 4, 15) });
+    return null;
+  }
+
+  // Knock one building out for a while (sabotage).
+  function jamBuilding(b, secs) {
+    const until = G.time + secs;
+    b.empUntil = Math.max(b.empUntil || 0, until);
+    if (['sam', 'silo', 'airfield', 'coastal'].includes(b.type)) b.readyAt = Math.max(b.readyAt || 0, until);
+    if (b.type === 'artillery' || b.type === 'railgun') b.reload = Math.max(b.reload || 0, secs);
+    G.bver++;
+    addFx(b.cell, 2, '140,200,255', 700);
+  }
+
+  // A silo overloaded by spies blows up where it stands with the biggest bomb
+  // it could launch: a Tsar Bomba at level 3, otherwise a nuke of its level.
+  function siloMeltdown(b, by) {
+    const tsar = b.level >= 3;
+    const radius = Math.round(sc(tsar ? TSAR_RADIUS : NUKE_RADIUS[b.level - 1]));
+    nukeImpact({ owner: by, to: b.cell, radius, tsar });
+  }
+
+  function advanceAgents() {
+    if (!G.agents || !G.agents.length) return;
+    for (const a of G.agents) {
+      a.t += TICK;
+      if (a.t < a.dur + SPY_INSERT) continue;
+      a.done = true;
+      const b = G.buildings.get(a.bid);
+      // The target is gone, or no longer an enemy's: the agents come home.
+      if (!b || b.owner === a.owner || allied(b.owner, a.owner)) {
+        announce({ k: 'spy', f: a.owner, to: b ? b.owner : -1, op: a.op, res: 'gone' });
+        continue;
+      }
+      const victim = b.owner;
+      hostile(a.owner, victim, a.op === 'meltdown' ? 50 : 15);
+      if (Math.random() >= spyChance(a.op, b)) {
+        addRel(victim, a.owner, -10);
+        announce({ k: 'spy', f: a.owner, to: victim, op: a.op, res: 'caught', type: b.type, cell: b.cell });
+        continue;
+      }
+      announce({ k: 'spy', f: a.owner, to: victim, op: a.op, res: 'ok', type: b.type, tsar: a.op === 'meltdown' && b.level >= 3, cell: b.cell });
+      // A meltdown glows red for a moment before the silo blows.
+      if (a.op === 'meltdown') G.meltdowns.push({ cell: b.cell, level: b.level, by: a.owner, until: G.time + MELTDOWN_WARN });
+      else jamBuilding(b, SABOTAGE_TIME);
+    }
+    G.agents = G.agents.filter((a) => !a.done);
+  }
+
+  function advanceMeltdowns() {
+    if (!G.meltdowns || !G.meltdowns.length) return;
+    G.meltdowns = G.meltdowns.filter((md) => {
+      if (G.time < md.until) return true;
+      const bid = G.bAt[md.cell];
+      const b = bid >= 0 ? G.buildings.get(bid) : null;
+      siloMeltdown(b || { cell: md.cell, level: md.level }, md.by);
+      return false;
+    });
+  }
+
   // A cruise missile: wrecks the building it hits, with a small blast.
   function cruiseImpact(m) {
     const bid = G.bAt[m.to];
@@ -3112,6 +3524,27 @@
     shellImpact({ owner: m.owner, to: m.to, blast: m.radius, kill: 0.03 });
   }
 
+  // Depth charges: the nearest enemy submarine within reach takes a hit and
+  // shows up (sonar) for a moment.
+  function dropDepthCharges(sh) {
+    sh.dcReload = (sh.dcReload || 0) - TICK;
+    if (sh.dcReload > 0) return;
+    let sub = null;
+    for (const o of G.ships) {
+      if (o.dead || !SHIPS[o.type].sub || allied(o.owner, sh.owner) || cellDist(o.cell, sh.cell) > sc(DC_RANGE)) continue;
+      if (!sub || cellDist(o.cell, sh.cell) < cellDist(sub.cell, sh.cell)) sub = o;
+    }
+    if (!sub) {
+      sh.dcReload = 0.5;
+      return;
+    }
+    sh.dcReload = DC_RELOAD;
+    sub.revealUntil = Math.max(sub.revealUntil || 0, G.time + 3);
+    addFx(sub.cell, 2.5, '190,225,255', 500);
+    damageShip(sub, sh.owner);
+    stat(sh.owner, 'shots');
+  }
+
   // Sail along routes, then battleships fire at the nearest target in range:
   // enemy ships first, then troop boats, then buildings, then land.
   function advanceShips() {
@@ -3119,6 +3552,7 @@
       const spec = SHIPS[sh.type];
       if ((sh.empUntil || 0) > G.time) continue;
       if (sh.voyage && sail(sh, sc(spec.speed) * TICK)) sh.voyage = null;
+      if (sh.dc) dropDepthCharges(sh);
       if (!spec.range) continue;
       sh.reload -= TICK;
       if (sh.reload > 0) continue;
@@ -3126,7 +3560,8 @@
       let fired = false;
       let foe = null;
       for (const o of G.ships) {
-        if (o.dead || allied(o.owner, sh.owner) || cellDist(o.cell, sh.cell) > range) continue;
+        // Guns can't reach a submarine: only depth charges can.
+        if (o.dead || SHIPS[o.type].sub || allied(o.owner, sh.owner) || cellDist(o.cell, sh.cell) > range) continue;
         if (!foe || cellDist(o.cell, sh.cell) < cellDist(foe.cell, sh.cell)) foe = o;
       }
       if (foe) {
@@ -3363,11 +3798,22 @@
 
     // The blast kills a share of the whole nation's troops, more the more
     // of its land is destroyed.
+    // Repeat hits on a nation within a few seconds (a salvo, MAD, several
+    // attackers at once) kill fewer troops each time, so no single moment
+    // can wipe out a whole army. Land damage stays in full.
+    if (!G.nukeHits) G.nukeHits = new Map();
     for (const [fid, [lost, before]] of hit) {
       const f = G.factions[fid];
+      // (A cluster nuke's warheads are already scaled down, so they don't count.)
+      const times = (G.nukeHits.get(fid) || []).filter((t) => G.time - t < NUKE_STACK_TIME);
+      const soften = m.part ? 1 : NUKE_STACK[Math.min(times.length, NUKE_STACK.length - 1)];
+      if (!m.part) {
+        times.push(G.time);
+        G.nukeHits.set(fid, times);
+      }
       // Each warhead of a cluster nuke kills fewer, as there are five.
       const loss = Math.min(0.85, (m.tsar ? TSAR_KILL : NUKE_KILL * (m.part ? 0.35 : 1)) + 3 * lost / Math.max(1, before));
-      f.troops *= 1 - loss;
+      f.troops *= 1 - loss * soften;
     }
     if (track) G.nukeEvents.push([m.to, R, m.tsar ? 1 : 0]);
     // The Tsar Bomba has its own colour code so it gets the bigger sound.
@@ -3454,6 +3900,45 @@
 
   let offerFrom = -1;
   let offerTimer = 0;
+  // Someone has gone MAD: offer to launch every ready silo back at them.
+  let madFrom = -1;
+  let madTimer = 0;
+  let madClock = 0;
+  function showMadAlert(from, n, dur) {
+    const me = G.factions[myId];
+    if (!me.alive || G.state !== 'play' || allied(myId, from)) return false;
+    madFrom = from;
+    const can = Math.min(readySilos(me), Math.floor(me.gold / NUKE_COST));
+    const impact = G.time + dur;
+    $('mad-text').innerHTML = `☢ <b>${G.factions[from].name}</b> has gone MAD on you: ${n} nuke${n === 1 ? '' : 's'} incoming!`
+      + `<span class="mad-clock">Impact in <b id="mad-left">${Math.ceil(dur)}</b>s</span>`
+      + (can ? '' : `<small>${me.built.silo ? 'None of your silos is ready to answer.' : 'You have no nuclear silos.'}</small>`);
+    // Count down to impact (game time, so it follows 2× and 3× speed).
+    clearInterval(madClock);
+    madClock = setInterval(() => {
+      const left = Math.max(0, Math.ceil(impact - G.time));
+      const el = $('mad-left');
+      if (el) el.textContent = left;
+      if (!left || madFrom < 0) clearInterval(madClock);
+    }, 200);
+    $('btn-mad-yes').textContent = can ? `☢ Retaliate (${can})` : 'OK';
+    $('btn-mad-yes').dataset.fire = can ? '1' : '';
+    $('mad-alert').classList.add('show');
+    sfx('siren');
+    clearTimeout(madTimer);
+    madTimer = setTimeout(hideMadAlert, MAD_ALERT_TIME * 1000);
+    return true;
+  }
+  function hideMadAlert() {
+    madFrom = -1;
+    $('mad-alert').classList.remove('show');
+  }
+  $('btn-mad-yes').addEventListener('click', () => {
+    if (madFrom >= 0 && G && $('btn-mad-yes').dataset.fire) perform({ a: 'mad', to: madFrom, back: true });
+    hideMadAlert();
+  });
+  $('btn-mad-no').addEventListener('click', hideMadAlert);
+
   function showOffer(from) {
     offerFrom = from;
     $('offer-text').textContent = `🤝 ${G.factions[from].name} proposes an alliance`;
@@ -3569,11 +4054,31 @@
       const t = nukeTarget(f, Math.round(sc(TSAR_RADIUS)));
       if (t >= 0 && !launchTsar(f, t)) return;
     }
+    // A nation with several ready silos sometimes fires a salvo at one area.
+    if (f.silosReady >= 3 && f.gold >= NUKE_COST * 3 && Math.random() < 0.05 + aggr * 0.08) {
+      const t = nukeTarget(f, salvoRadius(f) * 3);
+      if (t >= 0 && !fireSalvo(f, t)) return;
+    }
+    // Rarely, a nation with three or more ready silos goes all in.
+    if (f.silosReady >= 3 && f.gold >= NUKE_COST * 3 && Math.random() < 0.04 + aggr * 0.06) {
+      // Its victim: the strongest rival, more so one it already dislikes.
+      let victim = -1;
+      let best = 0;
+      for (const e of G.factions) {
+        if (!e.alive || e.id === f.id || allied(e.id, f.id)) continue;
+        const score = e.cells * (e.isPlayer ? (f.diff || G.diff).playerBias : 1) * (relOf(f.id, e.id) < 0 ? 1.5 : 1);
+        if (score > best) {
+          best = score;
+          victim = e.id;
+        }
+      }
+      if (victim >= 0 && !fireMad(f, victim)) return;
+    }
     if (f.built.silo && f.gold >= NUKE_COST && G.time >= f.nextNuke && Math.random() < 0.25 + aggr * 0.5) {
       // Sometimes an EMP or (from a level 2 silo) a cluster nuke instead.
       const r = Math.random();
       const kind = f.siloLevel >= 2 && f.gold >= CLUSTER_NUKE_COST && r < 0.3 ? 'cnuke' : r > 0.85 ? 'emp' : 'nuke';
-      const t = nukeTarget(f, kind === 'cnuke' ? Math.round(sc(NUKE_RADIUS[0]) * 2.2) : undefined);
+      const t = nukeTarget(f, kind === 'cnuke' ? Math.round(sc(NUKE_RADIUS[0]) * CLUSTER_REACH) : undefined);
       if (t >= 0 && !launchNuke(f, t, kind)) return;
     }
     let strongest = null;
@@ -3637,8 +4142,14 @@
     return false;
   }
 
-  // Idle warships head for the nearest enemy coast.
+  // Idle warships head for the nearest enemy coast. Now and then a rich
+  // nation fits SAM launchers, and depth charges once enemy subs are about.
   function aiFleet(f) {
+    if (f.gold > 1800 && Math.random() < 0.08) {
+      const subsAbout = G.ships.some((o) => SHIPS[o.type].sub && !allied(o.owner, f.id));
+      const sh = G.ships.find((x) => x.owner === f.id && !SHIPS[x.type].sub && (subsAbout ? !x.dc : (x.sam || 0) < 2));
+      if (sh) upgradeShip(f, sh.id, subsAbout && !sh.dc ? 'dc' : 'sam');
+    }
     for (const sh of G.ships) {
       if (sh.owner !== f.id || sh.voyage || G.time < (sh.orderAt || 0)) continue;
       sh.orderAt = G.time + 8 + Math.random() * 8;
@@ -3710,6 +4221,28 @@
     // Now and then a napalm strike instead, when it can afford one.
     const napalm = f.gold > NAPALM_COST + 300 && Math.random() < 0.3;
     return !!best && !launchStrike(f, best.cell, napalm);
+  }
+
+  // Now and then send spies: a meltdown at the biggest enemy silo whose blast
+  // spares its own and its allies' land, or else sabotage a valuable target.
+  function aiSpy(f) {
+    if (!f.built.barracks || G.time < (f.nextSpy || 0)) return;
+    if (f.barracksLevel >= 2 && f.gold >= SPY_OPS.meltdown.cost + 600) {
+      let best = null;
+      for (const b of G.buildings.values()) {
+        if (b.type !== 'silo' || allied(b.owner, f.id) || (best && b.level <= best.level) || spyChance('meltdown', b) < 0.35) continue;
+        const R = Math.round(sc(b.level >= 3 ? TSAR_RADIUS : NUKE_RADIUS[b.level - 1]));
+        if (blastSafe(f, b.cell, R)) best = b;
+      }
+      if (best && !launchSpy(f, 'meltdown', best.cell)) return;
+    }
+    if (f.gold < SPY_OPS.sabotage.cost + 400) return;
+    const options = [...G.buildings.values()]
+      .filter((b) => !allied(b.owner, f.id) && ['sam', 'silo', 'artillery', 'railgun', 'airfield', 'coastal', 'city'].includes(b.type)
+        && spyChance('sabotage', b) >= 0.35)
+      .sort((a, b) => (MAD_VALUE[b.type] || 1) * b.level - (MAD_VALUE[a.type] || 1) * a.level)
+      .slice(0, 5);
+    if (options.length) launchSpy(f, 'sabotage', options[Math.floor(Math.random() * options.length)].cell);
   }
 
   // Fire ready submarines at the most valuable enemy building in range.
@@ -3799,6 +4332,7 @@
     const scan = neighbourScan(f.id);
     aiFleet(f);
     if (G.time > 60 && Math.random() < 0.5) aiSubs(f);
+    if (G.time > 90 && Math.random() < 0.06 + f.aggr * 0.06) aiSpy(f);
     // Still in the land grab: bordering empty land and no enemy yet.
     f.landGrab = scan.counts.has(NEUTRAL) && ![...scan.counts.keys()].some((o) => o >= 0 && !allied(o, f.id));
     aiBuild(f, scan);
@@ -3872,6 +4406,9 @@
     advanceProjectiles();
     decayRadiation();
     burnFires();
+    advanceAgents();
+    advanceMeltdowns();
+    advanceMadQueue();
     for (const f of G.factions) {
       if (f.alive && f.cells === 0) eliminate(f, -1);
     }
@@ -4050,9 +4587,13 @@
     return { ok: true, msg: `${BUILDINGS[b.type].icon} ${BUILDINGS[b.type].label} upgraded to level ${b.level}` };
   }
 
-  function actNuke(fid, i, kind) {
+  function actNuke(fid, i, kind, n) {
     if (i < 0) return fail('Tap a target on the map');
     if (G.owner[i] === fid) return fail("That's your own land! Pick an enemy target");
+    if (kind === 'salvo') {
+      const err = fireSalvo(G.factions[fid], i);
+      return err ? fail(err) : { ok: true, msg: '' };
+    }
     const err = launchNuke(G.factions[fid], i, ['cnuke', 'emp'].includes(kind) ? kind : 'nuke');
     return err ? fail(err) : { ok: true, msg: '' };
   }
@@ -4076,7 +4617,7 @@
     if (act.a === 'spawn') return actSpawn(fid, cell);
     // Hostile acts against an ally are a betrayal: the first try only warns,
     // a second (act.betray) ends the alliance with no ceasefire.
-    if (['attack', 'nuke', 'tsar', 'strike', 'para', 'special', 'subfire'].includes(act.a) && cell >= 0) {
+    if (['attack', 'nuke', 'tsar', 'strike', 'para', 'special', 'subfire', 'spy'].includes(act.a) && cell >= 0) {
       // Troops go where you tap. A blast counts as an attack on an ally only
       // if over 75% of the land it covers is theirs (less is a splash that
       // earns a warning, see splashWarning), and on anyone else from half.
@@ -4104,7 +4645,21 @@
     if (act.a === 'attack') return actAttack(fid, cell, act.pct);
     if (act.a === 'build') return actBuild(fid, act.building, cell);
     if (act.a === 'upgrade') return actUpgrade(fid, act.id);
-    if (act.a === 'nuke') return actNuke(fid, cell, act.kind);
+    if (act.a === 'nuke') return actNuke(fid, cell, act.kind, act.n);
+    if (act.a === 'shipup') {
+      const err = upgradeShip(G.factions[fid], act.id, act.kind);
+      if (err) return fail(err);
+      const sh = G.ships.find((x) => x.id === act.id);
+      return { ok: true, msg: act.kind === 'dc' ? '🌊 Depth charges fitted' : sh && sh.sam > 1 ? '📡 SAM launcher upgraded to level 2' : '📡 SAM launcher fitted' };
+    }
+    if (act.a === 'spy') {
+      const err = launchSpy(G.factions[fid], act.op, cell);
+      return err ? fail(err) : { ok: true, msg: `🕵️ Your agents are on their way` };
+    }
+    if (act.a === 'mad') {
+      const err = fireMad(G.factions[fid], Number(act.to), !!act.back, MAD_FOCUS[act.focus] ? act.focus : 'all');
+      return err ? fail(err) : { ok: true, msg: '' };
+    }
     if (act.a === 'subfire') {
       const err = fireSub(G.factions[fid], act.id, act.w, cell);
       return err ? fail(err) : { ok: true, msg: '' };
@@ -4164,29 +4719,169 @@
     }
   }
 
-  function handleTap(clientX, clientY) {
-    if (!G || G.demo) return;
-    const i = cellAt(clientX, clientY);
-    if (G.state === 'spawn') {
-      if (G.factions[myId].capital >= 0) {
-        toast('Waiting for the other players to choose');
-        return;
+  // ---------- Aiming ----------
+  //
+  // Every attack that needs a target shows a preview of where it will hit:
+  // under the mouse as it moves, or where you tapped on a touch screen.
+
+  let hoverCell = -1;             // the map cell under the mouse
+  let madPreview = null;          // the last MAD plan drawn, reused while it holds
+
+  const AIM_TYPES = ['nuke', 'tsar', 'strike', 'para', 'special', 'sub', 'spy'];
+  const aimMode = (m) => !!m && AIM_TYPES.includes(m.type);
+
+  // The rings a preview draws for the active mode aimed at cell: each
+  // { cell, r, rgb }, plus whether the target is valid.
+  function aimRings(cell) {
+    const m = G.mode;
+    const me = G.factions[myId];
+    if (!m || cell < 0) return null;
+    const RED = '239,68,68';
+    const BLUE = '125,211,252';
+    const ORANGE = '249,115,22';
+    const GREEN = '134,239,172';
+    const WHITE = '226,232,240';
+    const o = G.owner[cell];
+    const enemyOk = o !== myId;
+    const ring = (r, rgb, at = cell) => ({ cell: at, r: Math.max(1, r), rgb });
+    if (m.type === 'nuke') {
+      if (m.kind === 'mad') {
+        const v = o;
+        if (v < 0 || v === myId || allied(v, myId)) return { ok: false, rings: [ring(salvoRadius(me), RED)] };
+        const focus = m.focus || 'all';
+        const key = `${v}:${madSize(me)}:${focus}:${G.bver}:${Math.floor(G.time)}`;
+        if (!madPreview || madPreview.key !== key) madPreview = { key, cells: madPlan(me, v, madSize(me), focus) };
+        return { ok: madPreview.cells.length > 0, rings: madPreview.cells.map((c) => ring(salvoRadius(me), RED, c)) };
       }
-      if (i >= 0) perform({ a: 'spawn', cell: i }, (res) => res.ok && afterSpawn(res.cell));
-      return;
+      if (m.kind === 'salvo') return { ok: enemyOk, rings: salvoPattern(cell, Math.max(2, salvoSize(me)), salvoRadius(me)).map((c) => ring(salvoRadius(me), RED, c)) };
+      if (m.kind === 'emp') return { ok: enemyOk, rings: [ring(Math.round(sc(EMP_RADIUS)), BLUE)] };
+      if (m.kind === 'cnuke') {
+        const r0 = Math.round(sc(NUKE_RADIUS[0]));
+        return { ok: enemyOk && me.siloLevel >= 2, rings: [ring(Math.round(r0 * CLUSTER_REACH), RED), ring(r0, RED)] };
+      }
+      return { ok: enemyOk, rings: [ring(salvoRadius(me), RED)] };
     }
-    if (G.state !== 'play' || !G.factions[myId].alive) return;
-    if (G.mode && G.mode.type === 'build') {
-      perform({ a: 'build', building: G.mode.building, cell: i }, (res) => {
-        if (!res.ok) return;
-        G.mode = null;
-        updateBanner();
+    if (m.type === 'tsar') return { ok: enemyOk, rings: [ring(Math.round(sc(TSAR_RADIUS)), '251,191,36')] };
+    if (m.type === 'strike' || m.type === 'para') {
+      const inRange = !pickAirbase(me, cell).err;
+      if (m.type === 'para') return { ok: inRange && o !== WATER && !allied(o, myId), rings: [ring(Math.round(sc(2.5)), WHITE)] };
+      if (m.napalm) return { ok: inRange && o !== WATER && !allied(o, myId), rings: [ring(Math.round(sc(STRIKE_SPREAD)) + 1, ORANGE)] };
+      return { ok: inRange && !allied(o, myId), rings: [ring(Math.round(sc(STRIKE_SPREAD)) + 1, RED)] };
+    }
+    if (m.type === 'special') {
+      const key = PERKS[me.perk] ? PERKS[me.perk].special : null;
+      if (key === 'drones') return { ok: enemyOk && cellDist(cell, me.capital) <= sc(DRONE_RANGE), rings: [ring(Math.round(sc(8)), RED)] };
+      if (key === 'stealth') return { ok: enemyOk, rings: [ring(Math.round(sc(STRIKE_SPREAD)) + 1, RED)] };
+      if (key === 'ambush') return { ok: o === myId, rings: [ring(Math.round(sc(AMBUSH_RADIUS)), GREEN)] };
+      if (key === 'railgun') return { ok: o === myId, rings: [ring(2, GREEN), ring(Math.round(sc(RAIL_RANGE)), WHITE)] };
+      if (key === 'viking') return { ok: o >= 0 && o !== myId, rings: [ring(Math.round(sc(3)), RED)] };
+      return null;
+    }
+    if (m.type === 'sub') {
+      const sh = G.ships.find((x) => x.id === m.id);
+      const ok = !!sh && enemyOk && cellDist(sh.cell, cell) <= sc(SUB_RANGE);
+      const r = {
+        cruise: sc(CRUISE_BLAST), ccruise: sc(CLUSTER_SPREAD + 1), nuke: sc(NUKE_RADIUS[1]),
+        cnuke: sc(NUKE_RADIUS[0]) * CLUSTER_REACH, emp: sc(EMP_RADIUS),
+      }[m.w] || 2;
+      return { ok, rings: [ring(Math.round(r), m.w === 'emp' ? BLUE : RED)] };
+    }
+    if (m.type === 'spy') {
+      const b = enemyBuildingNear(me, cell, m.op === 'meltdown' ? 'silo' : null);
+      if (!b) return { ok: false, rings: [ring(Math.round(sc(2)), WHITE)] };
+      const rings = [ring(Math.round(sc(2.5)), m.op === 'meltdown' ? '250,204,21' : BLUE, b.cell)];
+      if (m.op === 'meltdown') rings.push(ring(Math.round(sc(b.level >= 3 ? TSAR_RADIUS : NUKE_RADIUS[b.level - 1])), RED, b.cell));
+      return { ok: true, rings };
+    }
+    return null;
+  }
+
+  function drawAim(now) {
+    if (!aimMode(G.mode)) return;
+    const cell = G.mode.aim !== undefined && G.mode.aim >= 0 ? G.mode.aim : hoverCell;
+    const a = aimRings(cell);
+    if (!a) return;
+    const dpr = view.dpr;
+    const pulse = 0.85 + 0.15 * Math.sin(now / 180);
+    // Each ring: a faint fill in the weapon's colour, then a dark halo under
+    // a light dashed line, so the edge shows up on every nation's colour.
+    for (const x of a.rings) {
+      const rgb = a.ok ? x.rgb : '160,160,160';
+      // The weapon's colour lightened towards white, for the dashes.
+      const light = rgb.split(',').map((v) => Math.round(255 - (255 - Number(v)) * 0.35)).join(',');
+      const px = sx(cx(cell) + 0.5 + ddx(x.cell, cell));
+      const py = sy(cy(x.cell) + 0.5);
+      const r = x.r * view.cell;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${rgb},${0.16 * pulse})`;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 4.5 * dpr;
+      ctx.stroke();
+      ctx.strokeStyle = a.ok ? `rgba(${light},${0.95 * pulse})` : 'rgba(190,190,190,0.9)';
+      ctx.lineWidth = 2 * dpr;
+      ctx.setLineDash([7 * dpr, 5 * dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // A crosshair on the aim point.
+    const px = sx(cx(cell) + 0.5);
+    const py = sy(cy(cell) + 0.5);
+    const c = 7 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(px - c, py);
+    ctx.lineTo(px + c, py);
+    ctx.moveTo(px, py - c);
+    ctx.lineTo(px, py + c);
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 4 * dpr;
+    ctx.stroke();
+    ctx.strokeStyle = a.ok ? 'rgba(255,255,255,0.95)' : 'rgba(200,200,200,0.8)';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.stroke();
+  }
+
+  // The Fire button's wording for the active mode.
+  function fireLabel(m) {
+    if (m.type === 'spy') return '🕵️ Infiltrate';
+    if (m.type === 'para') return '🪂 Drop';
+    if (m.type === 'strike') return m.napalm ? '🔥 Strike' : '💣 Strike';
+    if (m.type === 'nuke' && m.kind === 'emp') return '⚡ Launch';
+    if (m.type === 'nuke' || m.type === 'tsar') return '☢ Launch';
+    if (m.type === 'sub') return m.w === 'emp' ? '⚡ Launch' : m.w === 'nuke' || m.w === 'cnuke' ? '☢ Launch' : '🚀 Launch';
+    if (m.type === 'special') {
+      const spec = specialOf(G.factions[myId]);
+      return spec ? `${spec.icon} Go` : '🎯 Fire';
+    }
+    return '🎯 Fire';
+  }
+
+  // Fire the active weapon or operation at cell i.
+  function fireMode(i) {
+    if (G.mode && G.mode.type === 'spy') {
+      perform({ a: 'spy', op: G.mode.op, cell: i }, (res) => {
+        if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
+        if (res.ok) {
+          G.mode = null;
+          updateBanner();
+        }
       });
       return;
     }
     if (G.mode && G.mode.type === 'sub') {
       perform({ a: 'subfire', id: G.mode.id, w: G.mode.w, cell: i }, (res) => {
         if (!res.ok && res.ally !== undefined) return; // Tap again to confirm.
+        if (res.ok) {
+          G.mode = null;
+          updateBanner();
+        }
+      });
+      return;
+    }
+    if (G.mode && G.mode.type === 'nuke' && G.mode.kind === 'mad') {
+      const victim = G.owner[i];
+      perform({ a: 'mad', to: victim, focus: G.mode.focus || 'all' }, (res) => {
         if (res.ok) {
           G.mode = null;
           updateBanner();
@@ -4220,17 +4915,43 @@
       });
       return;
     }
-    const ship = shipAtScreen(clientX, clientY);
-    if (ship && SHIPS[ship.type].sub) {
-      G.mode = null;
+  }
+
+  function handleTap(clientX, clientY) {
+    if (!G || G.demo) return;
+    const i = cellAt(clientX, clientY);
+    if (G.state === 'spawn') {
+      if (G.factions[myId].capital >= 0) {
+        toast('Waiting for the other players to choose');
+        return;
+      }
+      if (i >= 0) perform({ a: 'spawn', cell: i }, (res) => res.ok && afterSpawn(res.cell));
+      return;
+    }
+    if (G.state !== 'play' || !G.factions[myId].alive) return;
+    if (G.mode && G.mode.type === 'build') {
+      perform({ a: 'build', building: G.mode.building, cell: i }, (res) => {
+        if (!res.ok) return;
+        G.mode = null;
+        updateBanner();
+      });
+      return;
+    }
+    if (aimMode(G.mode)) {
+      // Tapping the map places the aim (and its preview), or moves it; only
+      // the Fire button (or Enter) launches.
+      G.mode.aim = i;
       updateBanner();
-      openSubSheet(ship);
       sfx('tap');
       return;
     }
+    // Tapping one of your ships opens its menu: move it, fire (submarines)
+    // or fit upgrades (warships).
+    const ship = shipAtScreen(clientX, clientY);
     if (ship) {
-      G.mode = { type: 'ship', id: ship.id };
+      G.mode = null;
       updateBanner();
+      openSubSheet(ship);
       sfx('tap');
       return;
     }
@@ -4427,7 +5148,11 @@
     }
   });
 
+  canvas.addEventListener('pointerleave', () => {
+    hoverCell = -1;
+  });
   canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && G) hoverCell = cellAt(e.clientX, e.clientY);
     const p = pointers.get(e.pointerId);
     if (!p || !gesture) return;
     p.x = e.clientX;
@@ -4608,6 +5333,217 @@
         ctx.quadraticCurveTo(x + c * w, y - hh * 0.4, x + c * w, y + c * 0.45);
         ctx.closePath();
         ctx.fill();
+      }
+    }
+  }
+
+  // A small dark helicopter seen from above: rotor blur and spinning
+  // blades, body, tail boom and a shadow on the ground below.
+  function drawHeli(x, y, ang, u, now, alpha, css) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Shadow, offset as if the sun were high in the south-east.
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(x + u * 1.6, y + u * 2.2, u * 2.4, u * 1.1, ang, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.translate(x, y);
+    ctx.rotate(ang);
+    // Tail boom and tail rotor, outlined so they show on dark sea too.
+    for (const [w, col] of [[u * 1.1, 'rgba(255,255,255,0.75)'], [u * 0.6, '#475569']]) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(-u * 0.5, 0);
+      ctx.lineTo(-u * 4.2, 0);
+      ctx.moveTo(-u * 4.2, -u * 0.9);
+      ctx.lineTo(-u * 4.2, u * 0.9);
+      ctx.stroke();
+    }
+    // Body: grey with a light outline and a stripe in your colour.
+    ctx.fillStyle = '#475569';
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(1, u * 0.3);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, u * 1.8, u * 1.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = css || '#94a3b8';
+    ctx.fillRect(-u * 0.9, -u * 1.05, u * 0.55, u * 2.1);
+    ctx.fillStyle = 'rgba(186,230,253,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(u * 0.9, 0, u * 0.55, u * 0.65, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Rotor: a light disc with two spinning blades.
+    const r = u * 3.6;
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = Math.max(1, u * 0.15);
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const spin = now / 40;
+    ctx.strokeStyle = 'rgba(226,232,240,0.95)';
+    ctx.lineWidth = u * 0.35;
+    for (const a of [spin, spin + Math.PI / 2]) {
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      ctx.lineTo(-Math.cos(a) * r, -Math.sin(a) * r);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Your own spy teams: the helicopter flies low to the target, hovers while
+  // the team fast-ropes down, then peels away. A ring round the target shows
+  // how far the mission has got. Nobody else sees any of it.
+  function drawAgents(now) {
+    if (!G.agents || !G.agents.length) return;
+    const dpr = view.dpr;
+    const u = clamp(view.cell * 0.9, 3.2 * dpr, 6 * dpr);
+    for (const a of G.agents) {
+      if (a.owner !== myId) continue;
+      const x0 = cx(a.from) + 0.5;
+      const y0 = cy(a.from) + 0.5;
+      const x1 = x0 + ddx(a.to, a.from);
+      const y1 = cy(a.to) + 0.5;
+      const t = a.t + acc;
+      const total = a.dur + SPY_INSERT;
+      const tx = sx(x1);
+      const ty = sy(y1);
+      // Progress ring with the phase.
+      const k = clamp(t / total, 0, 1);
+      // Just outside the building's icon, however far you've zoomed.
+      const ringR = clamp(view.cell * 2.6, 14 * dpr, 30 * dpr) * 0.78;
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath();
+      ctx.arc(tx, ty, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = a.op === 'meltdown' ? '#facc15' : '#7dd3fc';
+      ctx.beginPath();
+      ctx.arc(tx, ty, ringR, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
+      ctx.stroke();
+      const phase = t < a.dur ? 'Infiltrating' : t < a.dur + SPY_INSERT * 0.55 ? 'In position' : 'Executing';
+      ctx.font = `700 ${Math.round(11 * dpr)}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeText(phase, tx, ty + ringR + 3 * dpr);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(phase, tx, ty + ringR + 3 * dpr);
+      // The helicopter.
+      const ang = Math.atan2(y1 - y0, x1 - x0);
+      if (t < a.dur) {
+        // Fly in, easing to a hover just short of the target.
+        const e = t / a.dur;
+        const ease = e < 0.85 ? e / 0.85 * 0.95 : 0.95 + (e - 0.85) / 0.15 * 0.05;
+        drawHeli(sx(x0 + (x1 - x0) * ease), sy(y0 + (y1 - y0) * ease), ang, u, now, 1, G.factions[a.owner].css);
+      } else if (t < a.dur + SPY_INSERT * 0.55) {
+        // Hover, with the team sliding down a rope.
+        const h = (t - a.dur) / (SPY_INSERT * 0.55);
+        const hx = tx + Math.sin(now / 300) * u * 0.4;
+        const hy = ty - u * 2.5;
+        ctx.strokeStyle = 'rgba(226,232,240,0.85)';
+        ctx.lineWidth = 1.2 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.fillStyle = '#0f172a';
+        for (let n = 0; n < 3; n++) {
+          const f = clamp(h * 1.6 - n * 0.3, 0, 1);
+          ctx.beginPath();
+          ctx.arc(hx + (tx - hx) * f, hy + (ty - hy) * f, 1.6 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        drawHeli(hx, hy, ang, u, now, 1, G.factions[a.owner].css);
+      } else {
+        // Peel away home, fading out.
+        const e = (t - a.dur - SPY_INSERT * 0.55) / (SPY_INSERT * 0.45);
+        drawHeli(tx - Math.cos(ang) * e * 30 * dpr, ty - u * 2.5 - Math.sin(ang) * e * 30 * dpr, ang + Math.PI, u, now, 1 - e, G.factions[a.owner].css);
+      }
+    }
+  }
+
+  // A silo about to melt down: a red glow that pulses faster as it builds.
+  function drawMeltdowns(now) {
+    if (!G.meltdowns || !G.meltdowns.length) return;
+    for (const md of G.meltdowns) {
+      const left = Math.max(0, md.until - G.time);
+      const x = sx(cx(md.cell) + 0.5);
+      const y = sy(cy(md.cell) + 0.5);
+      const k = 1 - left / MELTDOWN_WARN;
+      const pulse = 0.5 + 0.5 * Math.sin(now / (120 - 80 * k));
+      const r = (14 + 22 * k) * view.dpr * (0.8 + 0.3 * pulse);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,240,200,${0.9})`);
+      g.addColorStop(0.35, `rgba(255,80,40,${0.75 * (0.6 + 0.4 * pulse)})`);
+      g.addColorStop(1, 'rgba(220,30,30,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Spy outcomes the attacker and target both see: sparks and smoke for a
+  // sabotage, a searchlight sweep and a red "!" when a team is caught.
+  const spyFx = [];
+  function drawSpyFx(now) {
+    for (let n = spyFx.length - 1; n >= 0; n--) {
+      const fx = spyFx[n];
+      const age = (now - fx.at) / 1000;
+      if (age > 1.6) {
+        spyFx.splice(n, 1);
+        continue;
+      }
+      const x = sx(cx(fx.cell) + 0.5);
+      const y = sy(cy(fx.cell) + 0.5);
+      const dpr = view.dpr;
+      if (fx.kind === 'spark') {
+        ctx.lineCap = 'round';
+        for (let k = 0; k < 10; k++) {
+          const a = k * 0.63 + fx.seed;
+          const d0 = age * 26 * dpr;
+          const d1 = d0 + 6 * dpr;
+          ctx.strokeStyle = `rgba(255,${180 + (k % 3) * 25},80,${1 - age / 1.6})`;
+          ctx.lineWidth = 1.6 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(x + Math.cos(a) * d0, y + Math.sin(a) * d0 + age * age * 10 * dpr);
+          ctx.lineTo(x + Math.cos(a) * d1, y + Math.sin(a) * d1 + age * age * 10 * dpr);
+          ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+        ctx.fillStyle = `rgba(90,90,100,${0.45 * (1 - age / 1.6)})`;
+        ctx.beginPath();
+        ctx.arc(x, y - age * 18 * dpr, (6 + age * 10) * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Searchlight: a beam sweeping over the spot, then a red "!".
+        const a = -Math.PI / 2 + Math.sin(age * 4) * 0.9;
+        const len = 46 * dpr;
+        const ox = x - Math.cos(a) * len;
+        const oy = y - Math.sin(a) * len;
+        ctx.fillStyle = `rgba(255,250,210,${0.32 * (1 - age / 1.6)})`;
+        ctx.beginPath();
+        ctx.moveTo(ox, oy);
+        ctx.lineTo(x + Math.cos(a + Math.PI / 2) * 9 * dpr, y + Math.sin(a + Math.PI / 2) * 9 * dpr);
+        ctx.lineTo(x + Math.cos(a - Math.PI / 2) * 9 * dpr, y + Math.sin(a - Math.PI / 2) * 9 * dpr);
+        ctx.closePath();
+        ctx.fill();
+        if (age > 0.4) {
+          ctx.font = `900 ${Math.round(20 * dpr)}px system-ui`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 4 * dpr;
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.strokeText('!', x, y - 14 * dpr);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillText('!', x, y - 14 * dpr);
+        }
       }
     }
   }
@@ -5010,6 +5946,20 @@
         ctx.fillStyle = '#d1d5db';
         ctx.fillRect(1.6 * u, -0.25 * u, 2.6 * u, 0.5 * u);
       }
+      // Fittings: a white SAM launcher amidships, depth charge racks astern.
+      if (sh.sam) {
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(-len * u * 0.55, -1.1 * u, 1.4 * u, 0.7 * u);
+        if (sh.sam > 1) ctx.fillRect(-len * u * 0.55, 0.4 * u, 1.4 * u, 0.7 * u);
+      }
+      if (sh.dc) {
+        ctx.fillStyle = '#0f172a';
+        for (const yy of [-0.9, 0.9]) {
+          ctx.beginPath();
+          ctx.arc(-len * u * 0.85, yy * u, 0.45 * u, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       ctx.restore();
       }
       if (emp) drawEmpSpark(x, y, len * u);
@@ -5020,7 +5970,7 @@
         ctx.lineWidth = 1.5 * view.dpr;
         ctx.stroke();
       }
-      const max = SHIPS[sh.type].hp;
+      const max = shipMaxHp(sh);
       if (sh.hp < max) {
         const w = len * 2 * u;
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -5490,9 +6440,13 @@
       drawBoats();
       drawShips();
       drawFires(now);
+      drawAgents(now);
+      drawMeltdowns(now);
+      drawSpyFx(now);
       drawPlanes();
       drawProjectiles();
       drawInterceptors();
+      drawAim(now);
       drawFx(now);
       if (!G.demo) {
         placeLabels(now);
@@ -5510,6 +6464,7 @@
     const banner = $('banner');
     const text = $('banner-text');
     const btn = $('btn-banner');
+    document.body.classList.toggle('aiming', !!(G && !G.demo && G.state === 'play' && G.mode));
     if (!G || G.demo) return;
     if (G.state === 'spawn' && G.factions[myId].capital >= 0) {
       text.innerHTML = 'Waiting for the other players to choose…';
@@ -5524,49 +6479,112 @@
     } else if (G.mode && G.mode.type === 'build') {
       const b = BUILDINGS[G.mode.building];
       text.innerHTML = `<strong>Tap your land</strong> to place ${b.icon} ${b.label}`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
+      banner.dataset.kind = 'mode';
+    } else if (G.mode && G.mode.type === 'spy') {
+      const spec = SPY_OPS[G.mode.op];
+      const b = G.mode.aim >= 0 ? enemyBuildingNear(G.factions[myId], G.mode.aim, G.mode.op === 'meltdown' ? 'silo' : null) : null;
+      if (b) {
+        const pc = Math.round(spyChance(G.mode.op, b) * 100);
+        const tone = pc >= 60 ? 'good' : pc >= 35 ? 'fair' : 'poor';
+        text.innerHTML = `<strong>${spec.icon} ${spec.label}: ${G.factions[b.owner].name}'s ${b.type === 'sam' ? 'SAM site' : BUILDINGS[b.type].label.toLowerCase()}</strong>`
+          + ` <span class="odds ${tone}">${pc}% chance</span>`;
+      } else {
+        text.innerHTML = G.mode.op === 'meltdown' ? `<strong>Tap an enemy nuclear silo</strong> for a ${spec.icon} meltdown`
+          : `<strong>Tap an enemy building</strong> to ${spec.icon} sabotage it`;
+      }
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'sub') {
       const w = SUB_WEAPONS[G.mode.w];
       text.innerHTML = `<strong>Tap enemy land</strong> within ${SUB_RANGE} cells for a ${w ? `${w.icon} ${w.label.toLowerCase()}` : 'missile'}`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
+      banner.dataset.kind = 'mode';
+    } else if (G.mode && G.mode.type === 'nuke' && G.mode.kind === 'mad') {
+      const me = G.factions[myId];
+      const v = G.mode.aim >= 0 ? G.owner[G.mode.aim] : -1;
+      const focus = G.mode.focus || 'all';
+      text.innerHTML = (v >= 0 && v !== myId && !allied(v, myId)
+        ? `<strong>☢ MAD on ${G.factions[v].name}:</strong> ${madSize(me)} nukes`
+        : `<strong>Tap the nation</strong> to go ☢ MAD on (${madSize(me)} nukes)`)
+        + '<span class="focus-seg" role="group" aria-label="Target first">'
+        + Object.entries(MAD_FOCUS).map(([k, x]) => `<button data-focus="${k}" class="${k === focus ? 'on' : ''}" title="Target ${x.label.toLowerCase()} first">`
+          + `<span aria-hidden="true">${x.icon}</span> ${x.label}</button>`).join('') + '</span>';
+      btn.textContent = '✕ Cancel';
+      banner.dataset.kind = 'mode';
+    } else if (G.mode && G.mode.type === 'nuke' && G.mode.kind === 'salvo') {
+      text.innerHTML = `<strong>Tap a target</strong> for a 💥 salvo of ${Math.max(2, salvoSize(G.factions[myId]))} nukes`;
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'nuke') {
       text.innerHTML = G.mode.kind === 'cnuke' ? '<strong>Tap a target</strong> for a cluster nuke ☢'
         : G.mode.kind === 'emp' ? '<strong>Tap a target</strong> for an EMP strike ⚡' : '<strong>Tap a target</strong> to nuke ☢';
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'tsar') {
       text.innerHTML = '<strong>Tap a target</strong> for the Tsar Bomba ☢☢';
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'ship') {
       const sh = G.ships.find((x) => x.id === G.mode.id);
       text.innerHTML = `<strong>Tap the sea</strong> to send your ${sh ? SHIPS[sh.type].label.toLowerCase() : 'ship'}`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'special') {
       const spec = specialOf(G.factions[myId]);
       const where = { own: 'Tap your land', coast: 'Tap an enemy coast', enemy: 'Tap enemy land' }[spec && spec.target] || 'Tap the map';
       text.innerHTML = `<strong>${where}</strong> for the ${spec ? `${spec.icon} ${spec.label}` : 'special'}`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'strike') {
       text.innerHTML = G.mode.napalm ? `<strong>Tap enemy land</strong> for a napalm strike 🔥 (${NAPALM_COST}g)`
         : `<strong>Tap a target</strong> for an air strike 💣 (${STRIKE_COST}g)`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else if (G.mode && G.mode.type === 'para') {
       text.innerHTML = `<strong>Tap land</strong> to drop ${settings.pct}% of your troops ✈`;
-      btn.textContent = 'Cancel';
+      btn.textContent = '✕ Cancel';
       banner.dataset.kind = 'mode';
     } else {
       banner.dataset.kind = '';
+    }
+    // On a touch screen, once you've aimed: fire by tapping inside the
+    // preview again or with the Fire button.
+    const aimed = !!(G && G.mode && aimMode(G.mode) && G.mode.aim >= 0);
+    $('btn-fire').classList.toggle('hidden', !aimed);
+    if (aimed) $('btn-fire').textContent = fireLabel(G.mode);
+    if (aimed) {
+      const word = fireLabel(G.mode).replace(/^\S+\s/, '');
+      text.innerHTML += `<small class="aim-tip">Tap elsewhere to move the aim, then press ${word}${window.matchMedia('(pointer: fine)').matches ? ' (or Enter)' : ''}</small>`;
+    }
+  }
+
+  // A dock tab: locked (dimmed, explains itself when tapped), its label (or a
+  // reload countdown) and an optional count badge.
+  function setTab(id, locked, label, badge) {
+    const t = $(id);
+    t.classList.toggle('locked', locked);
+    t.classList.toggle('wait', !locked && /^\d+s$/.test(label));
+    const tl = t.querySelector('.tl');
+    if (tl.textContent !== label) tl.textContent = label;
+    let b = t.querySelector('.badge');
+    if (badge && !locked) {
+      if (!b) {
+        b = document.createElement('span');
+        b.className = 'badge';
+        t.appendChild(b);
+      }
+      b.textContent = `×${badge}`;
+    } else if (b) {
+      b.remove();
     }
   }
 
   function updateHud(force) {
     if (G && G.tutorial) tutorialTick();
+    // A mode can end without a banner update (a ship sunk, the game over).
+    const aiming = !!(G && !G.demo && G.state === 'play' && G.mode);
+    if (document.body.classList.contains('aiming') !== aiming) updateBanner();
     if (!G || G.demo) return;
     const me = G.factions[myId];
     $('troops').textContent = fmt(me.troops);
@@ -5574,37 +6592,31 @@
     $('gold').textContent = fmt(me.gold);
     $('land').textContent = (me.cells / G.landCells * 100).toFixed(1) + '%';
     $('clock').textContent = fmtTime(G.time);
-    $('pct-label').textContent = `${settings.pct}% · ${fmt(me.troops * settings.pct / 100)}`;
-    const nuke = $('btn-nuke');
-    nuke.classList.toggle('hidden', !me.built.silo);
-    const reload = me.silosReady ? 0 : Math.ceil(me.nextNuke - G.time);
-    nuke.disabled = me.gold < Math.min(NUKE_COST, EMP_COST) || reload > 0 || G.state !== 'play';
-    nuke.textContent = reload > 0 ? `☢ ${reload}s`
-      : `☢ Launch${me.silosReady > 1 ? ` ×${me.silosReady}` : ''}`;
-    const tsar = $('btn-tsar');
-    tsar.classList.toggle('hidden', (me.siloLevel || 0) < 3);
-    const tsarWait = Math.ceil((me.nextTsar || 0) - G.time);
-    tsar.disabled = me.gold < TSAR_COST || tsarWait > 0 || G.state !== 'play';
-    tsar.textContent = tsarWait > 0 ? `☢☢ ${tsarWait}s` : `☢☢ ${fmt(TSAR_COST)}g`;
-    const para = $('btn-para');
-    para.classList.toggle('hidden', !me.built.airfield && !G.ships.some((sh) => sh.owner === myId && sh.type === 'carrier'));
-    const airWait = me.airReady ? 0 : Math.ceil(me.nextAir - G.time);
-    para.disabled = airWait > 0 || G.state !== 'play';
-    para.textContent = airWait > 0 ? `✈ ${airWait}s` : '✈ Air';
-    const special = $('btn-special');
+    $('pct-label').innerHTML = `<b>${fmt(me.troops * settings.pct / 100)}</b> troops`;
+    for (const c of $('pct-chips').children) c.classList.toggle('on', Number(c.dataset.v) === settings.pct);
+    // The dock's tabs stay put: locked ones dim, reloading ones count down.
+    const secs = (t) => (Number.isFinite(t) ? Math.max(0, Math.ceil(t - G.time)) : 0);
+    const reload = me.silosReady ? 0 : secs(me.nextNuke);
+    setTab('btn-nuke', !me.built.silo, reload > 0 ? `${reload}s` : 'Nukes', me.silosReady > 1 ? me.silosReady : 0);
+    const air = me.built.airfield || G.ships.some((sh) => sh.owner === myId && sh.type === 'carrier');
+    const airWait = me.airReady ? 0 : secs(me.nextAir);
+    setTab('btn-para', !air, airWait > 0 ? `${airWait}s` : 'Air');
     const spec = specialOf(me);
-    special.classList.toggle('hidden', !spec || me.capital < 0);
-    if (spec) {
-      const wait = Math.ceil((me.nextSpecial || 0) - G.time);
-      special.textContent = wait > 0 ? `${spec.icon} ${wait}s` : `⭐ ${spec.icon}`;
-      special.classList.toggle('ready', wait <= 0);
-    }
+    const specWait = spec ? Math.ceil((me.nextSpecial || 0) - G.time) : 0;
+    setTab('btn-special', !spec || me.capital < 0, specWait > 0 ? `${specWait}s` : 'Special');
+    $('btn-special').querySelector('.ti').textContent = spec ? spec.icon : '⭐';
+    $('btn-special').classList.toggle('ready', !!spec && specWait <= 0);
+    // Your place on the leaderboard.
+    const alive = G.factions.filter((f) => f.alive);
+    const rank = alive.filter((f) => f.cells > me.cells).length + 1;
+    $('board-rank').textContent = me.alive ? `#${rank} of ${alive.length}` : 'Leaderboard';
 
     const mine = G.attacks.filter((a) => a.from === myId);
     const boats = G.boats.filter((b) => b.owner === myId);
     const incoming = G.attacks.filter((a) => a.to === myId);
     let hint = 'Tap land to attack · drag to pan · pinch to zoom';
     if (G.state === 'spawn') hint = G.real ? 'Choose the country you will lead' : 'Choose where your empire begins';
+    else if (G.mode && window.matchMedia('(pointer: fine)').matches) hint = 'Esc or right-click also cancels';
     else if (incoming.length) {
       hint = '⚠ Under attack by ' + incoming.map((a) => `${G.factions[a.from].name} (${fmt(a.troops)})`).join(', ');
     } else if (mine.length || boats.length) {
@@ -5719,7 +6731,22 @@
       ['emp', '⚡', 'EMP strike', EMP_COST, `Knocks out enemy SAMs, guns, airfields, silos and ships for ${EMP_TIME}s. Clears the way for an attack`, true],
     ];
     const wait = Math.ceil((me.nextNuke || 0) - G.time);
-    listOut.html = opts.map(([k, icon, label, cost, text, ok]) => `<button data-nk="${k}" ${!ok || me.gold < cost ? 'disabled' : ''}>`
+    // MAD: every ready silo at one nation (you pick it on the map).
+    const all = madSize(me);
+    const mad = `<button data-nk="mad" class="danger" ${all ? '' : 'disabled'}><span class="bi">☢</span><span class="bt"><b>Mutually assured destruction${all ? ` (${all})` : ''}</b>`
+      + '<small>Every ready silo fires at one nation you pick: its silos, SAMs, cities, airfields and capital first. They\'re warned and can retaliate</small></span>'
+      + `<span class="bc">${all ? `${fmt(all * NUKE_COST)}g` : '—'}</span></button>`;
+    if (me.siloLevel >= 3) {
+      const tw = Math.ceil((me.nextTsar || 0) - G.time);
+      opts.push(['tsar', '☢☢', tw > 0 ? `Tsar Bomba (${tw}s)` : 'Tsar Bomba', TSAR_COST,
+        'The super-nuke: a huge, slow blast with long-lasting fallout. Level 3 silo', tw <= 0]);
+    }
+    // Salvo: a plain row; how many to fire is chosen on the banner while aiming.
+    const sz = salvoSize(me);
+    const salvoRow = `<button data-nk="salvo" ${sz >= 2 ? '' : 'disabled'}><span class="bi">💥</span><span class="bt"><b>Salvo${sz >= 2 ? ` of ${sz}` : ''}</b>`
+      + `<small>Up to ${SALVO_MAX} nukes land spread round one target, their blasts just overlapping: a much bigger area than one nuke. Needs 2 or more ready silos</small></span>`
+      + `<span class="bc">${fmt(NUKE_COST * Math.max(2, sz))}g</span></button>`;
+    listOut.html = mad + salvoRow + opts.map(([k, icon, label, cost, text, ok]) => `<button data-nk="${k}" ${!ok || me.gold < cost ? 'disabled' : ''}>`
       + `<span class="bi">${icon}</span><span class="bt"><b>${label}</b><small>${text}</small></span>`
       + `<span class="bc">${fmt(cost)}g</span></button>`).join('')
       + `<p class="now">${me.silosReady ? 'A silo is ready to launch.' : wait > 0 ? `Silos reloading: ${wait}s.` : ''} SAM sites can shoot missiles down.</p>`;
@@ -5742,6 +6769,10 @@
       closeBuildSheet();
       return;
     }
+    if (!SHIPS[sh.type].sub) {
+      renderWarshipSheet(me, sh);
+      return;
+    }
     const wait = Math.ceil((sh.readyAt || 0) - G.time);
     $('sheet-title').textContent = `🐋 Submarine · ${sh.hp} of ${SHIPS.submarine.hp} hull`;
     let html = '<button data-subw="move"><span class="bi">🧭</span><span class="bt"><b>Move</b>'
@@ -5752,6 +6783,32 @@
         + `<span class="bt"><b>${w.label}</b><small>${w.text}</small></span><span class="bc">${fmt(w.cost)}g</span></button>`;
     }
     html += `<p class="now">${wait > 0 ? `Reloading: ${wait}s. ` : ''}Range ${SUB_RANGE} cells. Firing shows the sub to everyone for ${SUB_REVEAL}s.</p>`;
+    listOut.html = html;
+  }
+
+  // A warship's menu: move it, or fit a SAM launcher and depth charges.
+  function renderWarshipSheet(me, sh) {
+    const spec = SHIPS[sh.type];
+    $('sheet-title').textContent = `${spec.icon} ${spec.label} · ${sh.hp} of ${shipMaxHp(sh)} hull`;
+    let html = '<button data-subw="move"><span class="bi">🧭</span><span class="bt"><b>Move</b>'
+      + '<small>Then tap the sea, or near a coast, to send it there</small></span><span class="bc"></span></button>';
+    const lvl = sh.sam || 0;
+    if (lvl < SHIP_SAM_COST.length) {
+      const cost = SHIP_SAM_COST[lvl];
+      html += `<button data-shipup="sam" ${me.gold < cost ? 'disabled' : ''}><span class="bi">📡</span><span class="bt">`
+        + `<b>${lvl ? 'Upgrade SAM launcher to level 2' : 'Fit a SAM launcher'}</b>`
+        + `<small>Shoots down enemy missiles and planes within ${SAM_RANGE[lvl]} cells, every ${SAM_RELOAD[lvl]}s. +${SHIP_SAM_HP} hull</small></span>`
+        + `<span class="bc">${fmt(cost)}g</span></button>`;
+    } else {
+      html += `<p class="now">📡 SAM launcher: level ${lvl} (range ${SAM_RANGE[lvl - 1]} cells, every ${SAM_RELOAD[lvl - 1]}s).</p>`;
+    }
+    if (!sh.dc) {
+      html += `<button data-shipup="dc" ${me.gold < SHIP_DC_COST ? 'disabled' : ''}><span class="bi">🌊</span><span class="bt"><b>Fit depth charges</b>`
+        + `<small>Sonar finds enemy submarines within ${DC_RANGE} cells and hits them every ${DC_RELOAD}s. Only depth charges (and coastal batteries) can hit a sub. +${SHIP_DC_HP} hull</small></span>`
+        + `<span class="bc">${fmt(SHIP_DC_COST)}g</span></button>`;
+    } else {
+      html += `<p class="now">🌊 Depth charges fitted: hunting submarines within ${DC_RANGE} cells.</p>`;
+    }
     listOut.html = html;
   }
 
@@ -5955,6 +7012,17 @@
           }
         }
       }
+      if (b.type === 'barracks') {
+        const wait = Math.ceil((me.nextSpy || 0) - G.time);
+        html += `<p class="now">🕵️ Spies slip behind enemy lines to any building on the map. Enemy forts guarding it and enemy barracks make them likelier to be caught.</p>`;
+        for (const [op, spec] of Object.entries(SPY_OPS)) {
+          const locked = (me.barracksLevel || 0) < spec.barracks;
+          html += `<button data-op="${op}" ${locked || wait > 0 || me.gold < spec.cost ? 'disabled' : ''}>`
+            + `<span class="bi">${spec.icon}</span><span class="bt"><b>${spec.label}${locked ? ` (level ${spec.barracks} barracks)` : ''}</b>`
+            + `<small>${spec.text}. About ${Math.round(spec.chance * 100)}% chance against an unguarded target; enemy forts make it much harder</small></span>`
+            + `<span class="bc">${wait > 0 ? `${wait}s` : `${fmt(spec.cost)}g`}</span></button>`;
+        }
+      }
       if (b.type === 'shipyard') {
         html += `<p class="now">Fleet: ${me.ships || 0} of ${me.shipCap || 0} ships</p>`;
         for (const [kind, spec] of Object.entries(SHIPS)) {
@@ -5975,13 +7043,22 @@
       return;
     }
     $('sheet-title').textContent = 'Build';
-    listOut.html = BUILD_ORDER.map((type) => {
+    // Tap a tile to see what it does, then Place (or tap it again).
+    const sel = BUILDINGS[buildSel] ? buildSel : null;
+    const tiles = BUILD_ORDER.map((type) => {
       const info = BUILDINGS[type];
       const cost = costOf(me, type);
-      return `<button data-type="${type}" ${me.gold < cost ? 'disabled' : ''}>`
-        + `<span class="bi">${info.icon}</span><span class="bt"><b>${info.label}</b><small>${info.stats(1)}</small></span>`
-        + `<span class="bc">${fmt(cost)}g</span></button>`;
-    }).join('') + '<p class="now">Tip: tap one of your buildings to upgrade it.</p>';
+      return `<button class="tile${type === sel ? ' sel' : ''}${me.gold < cost ? ' poor' : ''}" data-tile="${type}">`
+        + `<span class="bi">${info.icon}</span><span class="tn">${info.label}</span><span class="bc">${fmt(cost)}g</span></button>`;
+    }).join('');
+    let detail = '<div class="tile-detail">Tap a building to see what it does. Tip: tap one of your buildings on the map to upgrade it.</div>';
+    if (sel) {
+      const info = BUILDINGS[sel];
+      const cost = costOf(me, sel);
+      detail = `<div class="tile-detail"><b>${info.icon} ${info.label}</b>${info.stats(1)}`
+        + `<button data-type="${sel}" ${me.gold < cost ? 'disabled' : ''}>${me.gold < cost ? `Needs ${fmt(cost)} gold` : `Place ${info.label} · ${fmt(cost)}g`}</button></div>`;
+    }
+    listOut.html = `<div class="tiles">${tiles}</div>${detail}`;
   }
 
   // Rough direction from one cell to another, for labels.
@@ -5992,8 +7069,10 @@
     return names[(Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8];
   }
 
+  let buildSel = null;
   function openBuildSheet() {
     if (!G || G.state !== 'play') return;
+    buildSel = null;
     sheetBuilding = null;
     sheetMode = 'build';
     renderBuildSheet();
@@ -6183,6 +7262,42 @@
     saveSettings();
     updateHud(false);
   });
+  $('pct-chips').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    settings.pct = Number(b.dataset.v);
+    $('pct').value = settings.pct;
+    saveSettings();
+    updateHud(false);
+  });
+
+  // Phones: sound, speed and pause live in the ☰ menu.
+  $('btn-hud-menu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = $('hud-menu').classList.toggle('open');
+    $('btn-hud-menu').setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.hud-buttons')) $('hud-menu').classList.remove('open');
+  });
+
+  // The leaderboard opens from its pill; it starts open on wider screens.
+  if (settings.boardOpen ?? window.innerWidth > 700) document.body.classList.add('board-open');
+  $('btn-board').addEventListener('click', () => {
+    const open = document.body.classList.toggle('board-open');
+    $('btn-board').setAttribute('aria-expanded', String(open));
+    settings.boardOpen = open;
+    saveSettings();
+  });
+
+  // Sheets and the targeting banner sit just above the bottom bar, however
+  // tall it is on this screen.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      const h = $('hud-bottom').offsetHeight;
+      if (h) document.documentElement.style.setProperty('--dock-h', `${h}px`);
+    }).observe($('hud-bottom'));
+  }
 
   $('btn-play').addEventListener('click', () => newGame(false));
   $('btn-tutorial').addEventListener('click', startTutorial);
@@ -6322,27 +7437,78 @@
   $('btn-menu').addEventListener('click', toMenu);
   $('btn-quit').addEventListener('click', toMenu);
 
+  // Leave whatever targeting mode is active (placing a building, aiming a
+  // weapon, steering a ship). Returns whether there was one to leave.
+  const me0 = () => G.factions[myId];
+
+  function cancelMode() {
+    if (!G || !G.mode) return false;
+    G.mode = null;
+    updateBanner();
+    toast('Cancelled');
+    return true;
+  }
+
+  // Which targeting modes each action button starts: tapping the button
+  // again while aiming cancels instead.
+  const MODE_BUTTONS = {
+    'btn-build': ['build'],
+    'btn-special': ['special'],
+    'btn-para': ['para', 'strike'],
+    'btn-nuke': ['nuke', 'tsar'],
+  };
+  const cancelsMode = (id) => !!(G && G.mode && MODE_BUTTONS[id].includes(G.mode.type) && cancelMode());
+
+  $('btn-fire').addEventListener('click', () => {
+    if (G && G.mode && aimMode(G.mode) && G.mode.aim >= 0) fireMode(G.mode.aim);
+  });
   $('btn-banner').addEventListener('click', () => {
     if (!G) return;
     if (G.state === 'spawn') {
       perform({ a: 'spawn', cell: -1 }, (res) => res.ok && afterSpawn(res.cell));
     } else {
-      G.mode = null;
+      cancelMode();
     }
     updateBanner();
   });
 
+  // Esc (or a right-click on the map) cancels too, on a computer.
+  window.addEventListener('keydown', (e) => {
+    // Enter fires an aimed attack.
+    if (e.key === 'Enter' && G && G.mode && aimMode(G.mode) && G.mode.aim >= 0) {
+      e.preventDefault();
+      fireMode(G.mode.aim);
+      return;
+    }
+    if (e.key !== 'Escape' || !G || G.demo) return;
+    if (cancelMode()) e.preventDefault();
+    else if ($('build-sheet').classList.contains('show')) closeBuildSheet();
+  });
+  canvas.addEventListener('contextmenu', (e) => {
+    if (!G || G.demo) return;
+    e.preventDefault();
+    cancelMode();
+  });
+
   $('btn-build').addEventListener('click', () => {
+    if (cancelsMode('btn-build')) return;
     if ($('build-sheet').classList.contains('show')) closeBuildSheet();
     else openBuildSheet();
   });
   $('btn-build-close').addEventListener('click', closeBuildSheet);
   $('btn-special').addEventListener('click', () => {
-    if (!G || G.state !== 'play') return;
+    if (!G || G.state !== 'play' || cancelsMode('btn-special')) return;
+    if (lockedTab('btn-special', '⭐ Choose your country first')) return;
     if ($('build-sheet').classList.contains('show') && sheetMode === 'special') closeBuildSheet();
     else openSpecialSheet();
   });
   $('banner').addEventListener('click', (e) => {
+    const fb = e.target.closest('[data-focus]');
+    if (fb && G && G.mode && G.mode.kind === 'mad') {
+      G.mode.focus = fb.dataset.focus;
+      updateBanner();
+      return;
+    }
     if (e.target.closest('[data-perks]')) openPerksSheet();
   });
   $('btn-diplo').addEventListener('click', () => {
@@ -6367,10 +7533,34 @@
       updateBanner();
       return;
     }
-    if (b.dataset.nk) {
-      G.mode = { type: 'nuke', kind: b.dataset.nk };
+    if (b.dataset.tile) {
+      // A second tap on the chosen tile places it.
+      if (buildSel === b.dataset.tile && me0().gold >= costOf(me0(), buildSel)) {
+        G.mode = { type: 'build', building: buildSel };
+        closeBuildSheet();
+        updateBanner();
+        return;
+      }
+      buildSel = b.dataset.tile;
+      renderBuildSheet();
+      return;
+    }
+    if (b.dataset.op) {
+      G.mode = { type: 'spy', op: b.dataset.op };
       closeBuildSheet();
       updateBanner();
+      return;
+    }
+    if (b.dataset.nk) {
+      G.mode = b.dataset.nk === 'tsar' ? { type: 'tsar' }
+        : b.dataset.nk === 'salvo' ? { type: 'nuke', kind: 'salvo' }
+          : { type: 'nuke', kind: b.dataset.nk };
+      closeBuildSheet();
+      updateBanner();
+      return;
+    }
+    if (b.dataset.shipup) {
+      perform({ a: 'shipup', id: sheetSub, kind: b.dataset.shipup }, () => renderBuildSheet());
       return;
     }
     if (b.dataset.subw) {
@@ -6429,21 +7619,24 @@
   });
 
   $('btn-para').addEventListener('click', () => {
-    if (!G || G.state !== 'play') return;
+    if (!G || G.state !== 'play' || cancelsMode('btn-para')) return;
+    if (lockedTab('btn-para', '✈️ Build an airfield (or an aircraft carrier) to unlock air operations')) return;
     if ($('build-sheet').classList.contains('show') && sheetMode === 'air') closeBuildSheet();
     else openAirSheet();
   });
   $('btn-nuke').addEventListener('click', () => {
-    if (!G || G.state !== 'play') return;
+    if (!G || G.state !== 'play' || cancelsMode('btn-nuke')) return;
+    if (lockedTab('btn-nuke', '☢️ Build a nuclear silo to unlock nukes')) return;
     if ($('build-sheet').classList.contains('show') && sheetMode === 'nukes') closeBuildSheet();
     else openNukeSheet();
   });
-  $('btn-tsar').addEventListener('click', () => {
-    if (!G || G.state !== 'play') return;
-    closeBuildSheet();
-    G.mode = { type: 'tsar' };
-    updateBanner();
-  });
+  // Locked tabs say what unlocks them instead of doing nothing.
+  function lockedTab(id, msg) {
+    if (!$(id).classList.contains('locked')) return false;
+    toast(msg);
+    sfx('error');
+    return true;
+  }
 
   function pause() {
     if (!G || G.demo || (G.state !== 'play' && G.state !== 'spawn')) return;
@@ -7099,7 +8292,7 @@
       } : null,
       f: G.factions.map((f) => [Math.round(f.troops), Math.round(f.gold), f.alive ? 1 : 0, f.capital,
         Math.max(0, (f.nextTsar || 0) - G.time), f.kills, f.name, f.isPlayer ? 1 : 0, f.perk || '',
-        Math.max(0, Math.round((f.nextSpecial || 0) - G.time))]),
+        Math.max(0, Math.round((f.nextSpecial || 0) - G.time)), Math.max(0, Math.round((f.nextSpy || 0) - G.time))]),
       b: full || G.bver !== net.sentBver
         ? [...G.buildings.values()].map((b) => [b.id, b.type, b.cell, b.owner, b.level, b.hp, b.readyAt || 0, b.empUntil || 0]) : null,
       walls: full || G.bver !== net.sentBver ? G.walls.map((w) => [w.id, w.a, w.b, w.owner, w.path]) : null,
@@ -7110,11 +8303,13 @@
         (m.cruise ? 1 : 0) | (m.cluster ? 2 : 0) | (m.part ? 4 : 0) | (m.bomb ? 8 : 0) | (m.emp ? 16 : 0),
         m.px === undefined ? null : Math.round(m.px * 10) / 10, m.py === undefined ? null : Math.round(m.py * 10) / 10]),
       fires: G.fires.map((x) => [x.cell, Math.round((x.until - G.time) * 10) / 10]),
+      agents: G.agents.map((a) => [a.owner, a.from, a.to, Math.round(a.t * 10) / 10, Math.round(a.dur * 10) / 10, a.op]),
+      melt: (G.meltdowns || []).map((md) => [md.cell, Math.round((md.until - G.time) * 10) / 10]),
       planes: G.planes.map((p) => [p.owner, p.from, p.to, p.t, p.dur, p.kind === 'strike' ? 1 : 0, p.returning ? 1 : 0, p.stealth ? 1 : 0]),
       interceptors: G.interceptors.map((i) => [i.owner, i.from, Math.round(i.hx * 10) / 10, Math.round(i.hy * 10) / 10, i.t, i.dur]),
       ships: G.ships.map((sh) => [sh.id, sh.owner, sh.type, Math.round(sh.x * 10) / 10, Math.round(sh.y * 10) / 10,
         Math.round((sh.angle || 0) * 100) / 100, sh.hp, sh.readyAt || 0, sh.voyage ? sh.voyage.end : -1,
-        sh.revealUntil || 0, sh.empUntil || 0]),
+        sh.revealUntil || 0, sh.empUntil || 0, sh.sam || 0, sh.dc || 0, sh.samReadyAt || 0]),
       crates: G.crates,
       attacks: G.attacks.map((a) => [a.from, a.to, Math.round(a.troops), a.aimX, a.aimY]),
       fx: G.fxEvents,
@@ -7432,6 +8627,7 @@
       f.isPlayer = !!v[7];
       if (v[8]) f.perk = v[8];
       f.nextSpecial = G.time + (v[9] || 0);
+      f.nextSpy = G.time + (v[10] || 0);
       if (s.st && s.st[id]) f.stats = Object.fromEntries(STATS.map(([k], j) => [k, s.st[id][j]]));
     });
     if (s.b) {
@@ -7465,6 +8661,8 @@
       return m;
     });
     G.fires = (s.fires || []).map(([cell, left]) => ({ cell, until: G.time + left }));
+    G.agents = (s.agents || []).map(([owner, from, to, t, dur, op]) => ({ owner, from, to, t, dur, op }));
+    G.meltdowns = (s.melt || []).map(([cell, left]) => ({ cell, until: G.time + left }));
     G.planes = (s.planes || []).map(([owner, from, to, t, dur, strike, returning, stealth]) => ({
       owner, from, to, t, dur, kind: strike ? 'strike' : 'para', returning: !!returning, stealth: !!stealth,
     }));
@@ -7472,9 +8670,9 @@
     G.interceptors = (s.interceptors || []).map(([owner, from, hx, hy, t, dur]) => ({ owner, from, hx, hy, t, dur }));
     // Joiners draw each ship heading for its next cell, with its destination.
     const oldShips = new Map(G.ships.map((sh) => [sh.id, sh]));
-    G.ships = (s.ships || []).map(([id, owner, type, x, y, angle, hp, readyAt, end, revealUntil, empUntil]) => {
+    G.ships = (s.ships || []).map(([id, owner, type, x, y, angle, hp, readyAt, end, revealUntil, empUntil, sam, dc, samReadyAt]) => {
       const sh = oldShips.get(id) || { id };
-      return Object.assign(sh, { owner, type, x, y, angle, hp, readyAt, endCell: end, cell: cellAtXY(x, y), revealUntil, empUntil });
+      return Object.assign(sh, { owner, type, x, y, angle, hp, readyAt, endCell: end, cell: cellAtXY(x, y), revealUntil, empUntil, sam, dc, samReadyAt });
     });
     G.crates = s.crates || [];
     G.attacks = s.attacks.map(([from, to, troops, aimX, aimY]) => ({ from, to, troops, aimX, aimY }));

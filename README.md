@@ -130,9 +130,12 @@ artillery hit.
   fallout. A SAM needs **two** hits to stop it.
 - **📡 SAM sites** shoot down enemy nukes (the Tsar Bomba takes two hits),
   bombers and paratrooper planes that pass within range, one per reload.
+  They track a missile by the point on the ground beneath it, and always
+  fire at one about to land within their range, whichever way it comes
+  from. Cruise missiles fly under their radar.
   Each shot is a visible interceptor missile that flies up to meet its
   target and blows it up in mid-air. They protect allies too.
-- **✈ Air operations:** with an airfield (or a carrier), tap **✈ Air** and
+- **✈ Air operations:** with an airfield (or a carrier), open the **Air** tab and
   choose:
   - **🪂 Paradrop:** your Send % of troops fly to any non-allied land in
     range, land and push inland.
@@ -150,7 +153,32 @@ artillery hit.
   without being shot down, its airfield or carrier is ready to fly again
   straight away.
 - **⚔️ Barracks:** the best one you own makes every attack (by land, boat
-  or air) cheaper.
+  or air) cheaper. Barracks also train **🕵️ spies**: tap your barracks,
+  choose an operation, then tap an enemy building anywhere on the map. Your
+  team goes in by **helicopter**, flying low under SAM radar (only forts and
+  barracks can stop spies), in 4 to 15 seconds depending on distance. It
+  hovers while the team fast-ropes down, and a ring round the target shows
+  the mission's progress (*Infiltrating, In position, Executing*). Only you
+  see the helicopter. A sabotage ends in sparks and smoke; a caught team in
+  a searchlight sweep and a red "!"; and a meltdown makes the silo glow and
+  pulse red for a second and a half, for everyone to see, before it blows.
+  - **🕵️ Sabotage (500g):** knocks the building out for 45 seconds. SAMs,
+    guns, silos and air bases stop working (blue sparks), and cities and
+    mines stop paying. About 85% chance against an unguarded target.
+  - **☢ Silo meltdown (1,800g, level 2 barracks):** overloads an enemy silo
+    so it blows up where it stands with the biggest bomb it could launch: a
+    nuke of its level, or a **Tsar Bomba** from a level 3 silo. About 60%
+    chance against an unguarded target.
+
+  Forts are the best defence: each enemy fort whose cover includes the
+  target cuts the chance by 25 points (35 at level 2, 45 at level 3), and
+  one just outside its cover by 10. Each level of the enemy's best barracks
+  cuts it by 7 more. It never drops below 10%. While you aim, the banner
+  shows your chance against the building you've picked (green, amber or
+  red), and **🕵️ Infiltrate** sends the team. Caught
+  spies cost you the gold and the target learns who sent them. Spies
+  regroup for 30 seconds after sabotage and 2½ minutes after a meltdown.
+  AI nations send spies too.
 - **📦 Supply drops:** crates appear on unclaimed land every 30–50 seconds
   (up to four at a time). Whoever captures the cell first gets +600 gold,
   +25% troops or a free building upgrade.
@@ -159,44 +187,94 @@ artillery hit.
 - Build a **🚢 shipyard** on your coast, then tap it to launch warships:
   - **⚓ Battleship (400g):** every 2.5 seconds it fires at the nearest
     enemy target within about 14 cells: warships first, then troop boats
-    (it sinks them, troops and all), then coastal buildings and land. It
-    takes 5 hits to sink.
+    (it sinks them, troops and all), then coastal buildings and land. Its
+    guns can't hit submarines. It takes 5 hits to sink.
   - **🛩️ Aircraft carrier (1,500g):** a mobile airfield. ✈ Drop can launch
     from wherever it is (level 2 airfield range and reload). It has no guns
     and takes 10 hits to sink, so escort it.
   - **🐋 Submarine (900g, level 2 shipyard):** hidden from enemies unless
-    it has fired in the last 10 seconds or sails within range of their
-    warships or coastal batteries, which are the only things that can hit
-    it (bombs and shells pass over it; a nuke sinks it). It takes 4 hits.
+    it has fired in the last 10 seconds, or comes within range of their
+    coastal batteries or of a warship fitted with depth charges (sonar).
+    Only depth charges and coastal batteries can hit it (guns, bombs and
+    shells pass over it; a nuke sinks it). It takes 4 hits.
     Tap it to move it or fire a missile at anything within 90 cells. Each
     sub reloads on its own:
 
     | Missile | Cost | Reload | What it does |
     |---|---|---|---|
-    | 🚀 Cruise missile | 400 | 8 s | Flies low, so SAMs only see it at half range. Destroys the building it hits outright, with a small blast |
-    | 🎆 Cluster cruise missile | 650 | 12 s | Breaks up over the target into 8 bombs spread across a wide area |
+    | 🚀 Cruise missile | 400 | 8 s | Flies under SAM radar. Destroys the building it hits outright, with a small blast |
+    | 🎆 Cluster cruise missile | 650 | 12 s | Flies under SAM radar, then breaks up over the target into 8 bombs spread across a wide area |
     | ⚡ EMP missile | 500 | 20 s | Knocks out enemy SAMs, artillery, railway guns, coastal batteries, airfields, silos and ships within 16 cells for 20 s |
     | ☢ Sub nuke | 1,350 | 35 s | A level 2 nuke. Needs a level 2 silo at home |
     | ☢ Cluster nuke | 1,800 | 45 s | Splits into 5 nuclear warheads spread round the target. Needs a level 2 silo at home |
-- **Moving ships:** tap one of your ships to select it (a ring appears),
-  then tap the sea, or near a coast, to send it there. It finds its own
-  route, and a dashed line shows where it's heading.
+- **Your ships:** tap one to open its menu. **Move** it (then tap the sea,
+  or near a coast; it finds its own route, and a dashed line shows where
+  it's heading), fire a submarine's missiles, or fit a warship
+  (battleship, carrier or dreadnought) with upgrades:
+  - **📡 SAM launcher (600g, level 2 for 1,000g):** shoots down enemy
+    missiles and planes like a SAM site of that level, from wherever the
+    ship is. Each level adds 2 hull.
+  - **🌊 Depth charges (450g):** sonar finds enemy submarines within 10
+    cells and the charges hit them every 3 seconds. Adds 1 hull.
+
+  Fitted ships show a white launcher amidships and dark depth charge
+  racks astern. AI nations fit them too.
 - Artillery fires at enemy ships in range too. AI nations with a coastline
   build shipyards and send fleets against enemy coasts.
 
 **Artillery** shells enemy land and buildings within range. Hits kill troops
 and blast land back to neutral.
 
-**Nukes** cost 900 gold. Tap **☢ Launch**, choose a weapon, then tap an
+**Nukes** cost 900 gold. Open the **Nukes** tab, choose a weapon, then tap an
 enemy target (you can't nuke your own land). The silo can launch:
+- **☢ Mutually assured destruction (MAD):** every ready silo you can pay
+  for (900g each) fires at **one nation**. Choose MAD, then tap that
+  nation: the preview shows where every nuke will land, and **☢ Launch**
+  launches. The nukes go first at its most valuable
+  targets (silos, SAMs, cities, airfields and its capital), then spread
+  over the rest of its land, never where a blast would touch your own or an
+  ally's land. You can't go MAD on an ally or during a ceasefire.
+
+  While you aim, a row of buttons on the banner picks what to hit first:
+  **⚖️ All** (the usual mix), **☢ Silos** (so they can't retaliate),
+  **📡 Defences** (SAMs, coastal batteries, artillery, railway guns and
+  forts), **🏙️ Cities** (cities, gold mines and the capital) or **✈️
+  Military** (airfields, shipyards and barracks). The preview updates as
+  you switch; any nukes left over still spread over the rest of the land.
+
+  MAD nukes are a long-range strike: they take 8 seconds to land, against
+  3 for a single nuke, so the victim has time to answer.
+
+  **The victim is warned:** a red alert, "☢ Germany has gone MAD on you: 6
+  nukes incoming!", with a countdown to impact and a **☢ Retaliate**
+  button that fires all their
+  ready silos straight back at the attacker, aimed with the usual mix: there
+  is no time to choose. The incoming
+  nukes are probably aimed at their silos, so it's use them or lose them.
+  A retaliation can't be answered again, and everyone else just gets a
+  message. AI victims with ready silos usually retaliate, and AI nations
+  with three or more ready silos occasionally go MAD on their strongest
+  rival.
+- **💥 Salvo (900g a nuke, 2 or more ready silos):** up to 4 full-size
+  nukes land spread round one target, about a blast's width apart so the
+  blasts just overlap: a much bigger area than one nuke, and SAMs must stop
+  each one. It fires 4, or as many as you have ready (and can pay for) if
+  fewer. To fire every silo at once, use MAD. AI nations with several
+  silos use salvos too.
 - **☢ Nuke (900g):** one big blast.
 - **☢ Cluster nuke (1,500g, level 2 silo):** the missile breaks up near the
-  target into 5 warheads, each a level 1 blast, spread round it: a much
-  wider area. Its hardened bus takes two SAM hits before it splits, and
-  after that SAMs must stop each warhead separately.
+  target into 5 warheads, each a level 1 blast, packed round it: a wider
+  area than one nuke, but always tighter than a salvo. Its hardened bus
+  takes two SAM hits before it splits, and after that SAMs must stop each
+  warhead separately.
 - **⚡ EMP strike (500g):** no blast; it knocks out enemy defences, guns,
   air bases, silos and ships within 16 cells for 20 seconds (blue sparks
   show what's out). Fire one ahead of a nuke or an invasion.
+
+When several nukes hit the same nation within 4 seconds (a salvo, MAD or
+two attackers at once), each one after the first kills fewer troops (60%,
+then 35%, then 20% of the usual), so one moment can flatten land but can't
+wipe out a whole army.
 
 Missiles and air strikes can be aimed at the sea as well as land. Any
 blast sinks enemy troop boats within its radius and hits enemy warships
@@ -205,7 +283,7 @@ blast sinks enemy troop boats within its radius and hits enemy warships
  Each silo reloads separately, so two silos let you
 fire twice as often, three silos three times as often, and so on. A nuke
 fires from your best ready silo (highest level, then nearest the target),
-and its blast size and reload depend on that silo's level. The ☢ button
+and its blast size and reload depend on that silo's level. The Nukes tab
 shows how many silos are ready (for example ×2). The missile takes three seconds to
 arrive and everyone can see where it will land. It wipes out troops,
 buildings and ownership within its blast radius, and kills at least 10% of
@@ -229,12 +307,37 @@ stops at the end of a game. Tap 🔊 at the top of the screen to cycle
 remembered. All sound goes quiet while the app is in the background or the
 screen is locked, and comes back when you return.
 
-The HUD shows troops and troop cap, gold, your share of the land, the clock
-and a leaderboard showing each nation's share of the land and its troops (the
-map labels show just names). The bottom line lists your attacks and boats in progress,
-or warns you about incoming attacks. **1× / 2× / 3×** changes the game speed
-and **❚❚** pauses the game. On Android the back button cancels a build or
+The top bar shows your troops (and troop cap), gold, share of the land and
+the clock, with sound, speed (**1× / 2× / 3×**) and pause on the right (in
+the **☰** menu on a phone). The **🏆 rank** pill under it (for example "#4 of
+6") opens the full leaderboard. Messages appear at the top of the screen.
+
+At the bottom, **Send** sets how much of your army each attack takes
+(25/50/75/100%, plus a fine slider on a computer), and the dock has five
+tabs: **Build**, **Nukes**, **Air**, **Special** and **Nations**
+(diplomacy). Tabs you haven't unlocked yet stay in place, dimmed with a 🔒,
+and tell you what unlocks them; reloading ones count down. The **Build**
+menu is a grid of tiles: tap one to see what it does, then **Place** it
+(or tap it again). The line under the dock lists your attacks and boats in
+progress, or warns you about incoming attacks. On Android the back button cancels a build or
 nuke, and otherwise pauses the game instead of leaving it.
+
+**Aiming:** every attack that needs a target shows where it will land
+before you fire: the blast ring of a nuke, salvo, cluster nuke, EMP or Tsar
+Bomba, an air strike's or napalm's spread, a paradrop zone, a special's or
+submarine missile's area, or the building your spies will go for (with the
+blast of a silo meltdown). The rings turn grey if the target isn't valid (out
+of range, or your own land). With a mouse the preview follows the pointer.
+Tapping or clicking the map places your aim (tap again anywhere to move
+it), and nothing happens until you press the banner's action button (or
+**Enter** on a computer): **☢ Launch** for nukes, **💣 Strike**,
+**🪂 Drop**, **🕵️ Infiltrate** for spies, and so on.
+
+**Cancelling:** any action that waits for you to tap the map (placing a
+building, aiming a nuke, special, air strike or submarine missile, or
+steering a ship) can be cancelled with the red **✕ Cancel** button under
+the banner's "Tap…" prompt, by tapping its dock tab again (Build, Nukes, Air or Special), or with **Esc** or
+a right-click on a computer.
 
 ### The AI opponents
 

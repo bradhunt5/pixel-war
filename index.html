@@ -17,46 +17,57 @@
   <canvas id="map" aria-label="Game map"></canvas>
 
   <header id="hud-top" class="hud">
-    <div class="stat">
-      <span class="k">Troops</span>
-      <span class="v"><span id="troops">0</span><span id="troops-max" class="sub">/ 0</span></span>
-    </div>
-    <div class="stat">
-      <span class="k">Gold</span>
-      <span id="gold" class="v gold">0</span>
-    </div>
-    <div class="stat">
-      <span class="k">Land</span>
-      <span id="land" class="v">0%</span>
-    </div>
-    <div class="stat">
-      <span class="k">Time</span>
-      <span id="clock" class="v">0:00</span>
+    <div class="stats">
+      <div class="stat" title="Troops (and your troop cap)">
+        <span class="ic" aria-hidden="true">👥</span>
+        <span class="v"><span id="troops">0</span><span id="troops-max" class="sub">/ 0</span></span>
+      </div>
+      <div class="stat" title="Gold">
+        <span class="ic" aria-hidden="true">💰</span>
+        <span id="gold" class="v gold">0</span>
+      </div>
+      <div class="stat" title="Your share of the land">
+        <span class="ic" aria-hidden="true">🗺️</span>
+        <span id="land" class="v">0%</span>
+      </div>
+      <div class="stat" title="Time">
+        <span class="ic" aria-hidden="true">⏱</span>
+        <span id="clock" class="v">0:00</span>
+      </div>
     </div>
     <div class="hud-buttons">
-      <button id="btn-sound" class="icon-btn" aria-label="Sound on">🔊</button>
-      <button id="btn-speed" class="icon-btn" aria-label="Game speed">1×</button>
-      <button id="btn-pause" class="icon-btn" aria-label="Pause">❚❚</button>
+      <button id="btn-hud-menu" class="icon-btn" aria-label="Menu" aria-expanded="false">☰</button>
+      <div id="hud-menu" class="hud-menu">
+        <button id="btn-sound" class="icon-btn" aria-label="Sound on">🔊</button>
+        <button id="btn-speed" class="icon-btn" aria-label="Game speed">1×</button>
+        <button id="btn-pause" class="icon-btn" aria-label="Pause">❚❚</button>
+      </div>
     </div>
   </header>
 
+  <button id="btn-board" class="board-pill hud" aria-expanded="false">🏆 <span id="board-rank">#1</span> <span class="chev">▾</span></button>
   <ol id="board" class="hud" aria-label="Leaderboard"></ol>
 
   <footer id="hud-bottom" class="hud">
     <div class="send-row">
-      <label for="pct">Send</label>
-      <input id="pct" type="range" min="5" max="100" step="5" value="50">
+      <span class="send-k">Send</span>
+      <div id="pct-chips" class="pct-chips">
+        <button data-v="25">25%</button>
+        <button data-v="50">50%</button>
+        <button data-v="75">75%</button>
+        <button data-v="100">100%</button>
+      </div>
+      <input id="pct" type="range" min="5" max="100" step="5" value="50" aria-label="Share of troops to send">
       <span id="pct-label">50%</span>
     </div>
-    <div class="action-row">
-      <button id="btn-build" class="act">🏗️ Build</button>
-      <button id="btn-nuke" class="act nuke hidden">☢ Launch</button>
-      <button id="btn-tsar" class="act nuke hidden">☢☢</button>
-      <button id="btn-para" class="act hidden">✈ Drop</button>
-      <button id="btn-special" class="act hidden" aria-label="Special weapon">⭐</button>
-      <button id="btn-diplo" class="act" aria-label="Diplomacy">🤝<span class="lbl"> Diplomacy</span></button>
-      <div id="hint" class="hint">Tap land to attack</div>
-    </div>
+    <nav class="dock" aria-label="Actions">
+      <button id="btn-build" class="tab"><span class="ti" aria-hidden="true">🏗️</span><span class="tl">Build</span></button>
+      <button id="btn-nuke" class="tab nuke"><span class="ti" aria-hidden="true">☢️</span><span class="tl">Nukes</span></button>
+      <button id="btn-para" class="tab"><span class="ti" aria-hidden="true">✈️</span><span class="tl">Air</span></button>
+      <button id="btn-special" class="tab special"><span class="ti" aria-hidden="true">⭐</span><span class="tl">Special</span></button>
+      <button id="btn-diplo" class="tab"><span class="ti" aria-hidden="true">🤝</span><span class="tl">Nations</span></button>
+    </nav>
+    <div id="hint" class="hint">Tap land to attack</div>
   </footer>
 
   <section id="build-sheet" class="sheet" aria-label="Build">
@@ -70,6 +81,7 @@
   <div id="banner" class="banner" data-kind="">
     <p id="banner-text"></p>
     <button id="btn-banner" class="secondary small">Random</button>
+    <button id="btn-fire" class="secondary small hidden">🎯 Fire</button>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -80,6 +92,14 @@
     <div class="tut-row">
       <button id="btn-tut-skip" class="secondary small">Skip step</button>
       <button id="btn-tut-end" class="secondary small">End tutorial</button>
+    </div>
+  </div>
+
+  <div id="mad-alert" class="offer mad-alert" role="alertdialog" aria-label="Nuclear alert">
+    <p id="mad-text"></p>
+    <div class="offer-row">
+      <button id="btn-mad-yes" class="primary small">☢ Retaliate</button>
+      <button id="btn-mad-no" class="secondary small">Dismiss</button>
     </div>
   </div>
 
